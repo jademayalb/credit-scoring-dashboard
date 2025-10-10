@@ -1,0 +1,15 @@
+[theme]
+primaryColor = "#1A2980"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f2f7ff"
+textColor = "#1E3A5F"
+font = "arial"
+successColor = "#147D64"
+warningColor = "#9C4221"
+
+[server]
+enableCORS = true
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
