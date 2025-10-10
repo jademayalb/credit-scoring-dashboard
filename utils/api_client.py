@@ -149,16 +149,15 @@ def get_client_details(client_id: int) -> Optional[Dict[str, Any]]:
 
 # Fonction pour récupérer les valeurs SHAP (importance des features)
 @st.cache_data(ttl=3600)
-def get_feature_importance(client_id: int) -> Optional[Dict[str, float]]:
+def get_feature_importance(client_id):
     """
-    Récupère les valeurs SHAP (importance des features) depuis l'API.
+    Récupère les valeurs SHAP pour un client spécifique depuis l'API
     
-    Args:
-        client_id: Identifiant unique du client
+    Parameters:
+        client_id (int): Identifiant unique du client
         
     Returns:
-        Dictionnaire avec les noms de features comme clés et les valeurs SHAP comme valeurs,
-        ou None si les valeurs SHAP ne peuvent pas être récupérées.
+        dict: Dictionnaire des features et leurs valeurs SHAP, ou None en cas d'erreur
     """
     try:
         logger.info(f"Récupération des valeurs SHAP pour le client {client_id}")
@@ -166,27 +165,99 @@ def get_feature_importance(client_id: int) -> Optional[Dict[str, float]]:
         
         if response.status_code == 200:
             data = response.json()
+            shap_values = data.get("shap_values", {})
+            logger.info(f"Valeurs SHAP récupérées avec succès pour client {client_id}")
+            return shap_values
             
-            # Extraire les valeurs SHAP de la réponse
-            if "shap_values" in data and data["status"] == "OK":
-                shap_values = data["shap_values"]
-                logger.info(f"Valeurs SHAP récupérées avec succès pour le client {client_id}")
-                return shap_values
-            else:
-                logger.error(f"Format de réponse SHAP inattendu pour le client {client_id}")
-                return None
-                
         elif response.status_code == 404:
-            logger.warning(f"Valeurs SHAP non trouvées pour le client {client_id}")
+            logger.warning(f"Client {client_id} non trouvé pour les valeurs SHAP")
             return None
         else:
-            logger.error(f"Erreur API {response.status_code} lors de la récupération des valeurs SHAP: {response.text}")
-            return None
-            
+            logger.error(f"Erreur API SHAP {response.status_code}: {response.text}")
+            # En cas d'erreur, utiliser l'ancienne méthode comme fallback
+            return _get_feature_importance_fallback(client_id)
+        
     except Exception as e:
         logger.exception(f"Exception lors de la récupération des valeurs SHAP pour client {client_id}")
-        return None
+        # En cas d'exception, utiliser l'ancienne méthode comme fallback
+        return _get_feature_importance_fallback(client_id)
 
+def _get_feature_importance_fallback(client_id):
+    """
+    Version de fallback qui utilise la méthode précédente basée sur les valeurs globales
+    """
+    logger.warning(f"Utilisation du fallback pour les valeurs SHAP du client {client_id}")
+    
+    # Définir l'importance globale des features (pré-calculée)
+    feature_importance = {
+        "EXT_SOURCE_3": {"importance": 0.364685, "direction": -1},  # Négatif = réduit le risque
+        "EXT_SOURCE_2": {"importance": 0.324024, "direction": -1},
+        "AMT_GOODS_PRICE": {"importance": 0.215875, "direction": 1},  # Positif = augmente le risque
+        "AMT_CREDIT": {"importance": 0.198489, "direction": 1},
+        "EXT_SOURCE_1": {"importance": 0.157631, "direction": -1},
+        "DAYS_EMPLOYED": {"importance": 0.125956, "direction": -1},
+        "CODE_GENDER": {"importance": 0.125809, "direction": 1},  # Pour les hommes
+        "NAME_EDUCATION_TYPE": {"importance": 0.090088, "direction": -1},  # Pour Higher education
+        "DAYS_BIRTH": {"importance": 0.077843, "direction": -1},
+        "AMT_ANNUITY": {"importance": 0.075558, "direction": 1}
+    }
+    
+    # Récupérer les détails du client
+    client_details = get_client_details(client_id)
+    
+    if not client_details or 'features' not in client_details:
+        return None
+        
+    # Récupérer les valeurs réelles des features pour ce client
+    client_features = client_details['features']
+    
+    # Calculer l'impact de chaque feature pour ce client
+    client_impacts = {}
+    for feature, info in feature_importance.items():
+        if feature in client_features:
+            # Récupérer la valeur de la feature pour ce client
+            value = client_features[feature]
+            
+            # Calculer l'impact en fonction de l'importance et de la direction
+            impact = info["importance"] * info["direction"]
+            
+            # Ajuster l'impact en fonction de la valeur spécifique du client
+            if feature in ["EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3"]:
+                # Pour les sources externes, plus la valeur est élevée, moins le risque est élevé
+                if value > 0.5:  # Supposons que 0.5 est la moyenne
+                    impact = -abs(impact)
+                else:
+                    impact = abs(impact)
+            
+            elif feature in ["DAYS_BIRTH", "DAYS_EMPLOYED"]:
+                # Ces features sont négatives (jours dans le passé)
+                years = abs(value) / 365.25
+                if feature == "DAYS_BIRTH" and years > 40:  # Plus de 40 ans
+                    impact = -abs(impact)
+                elif feature == "DAYS_EMPLOYED" and years > 5:  # Plus de 5 ans d'emploi
+                    impact = -abs(impact)
+                else:
+                    impact = abs(impact)
+            
+            elif feature == "CODE_GENDER":
+                # Pour le genre, l'impact est positif pour les hommes
+                if value == "M":
+                    impact = abs(impact)
+                else:
+                    impact = -abs(impact)
+            
+            elif feature == "NAME_EDUCATION_TYPE":
+                # Pour l'éducation, l'impact est négatif pour l'éducation supérieure
+                if value == "Higher education":
+                    impact = -abs(impact)
+                else:
+                    impact = abs(impact)
+            
+            # Ajouter l'impact calculé au dictionnaire
+            client_impacts[feature] = impact
+    
+    return client_impacts
+        
 # Liste des clients disponibles depuis le CSV
 @st.cache_data(ttl=86400)  # Mise en cache pour 24 heures
 def get_available_clients(limit: int = 100) -> List[int]:

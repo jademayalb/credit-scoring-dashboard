@@ -1,10 +1,10 @@
 """Configuration globale de l'application."""
 
 # URLs des APIs
-API_URL_BASE = "https://credit-scoring-jademayalb-db8bcc609fed.herokuapp.com"
+API_URL_BASE = "https://credit-scoring-api-shap-jmb-bb42ec68fd62.herokuapp.com"  # Nouvelle URL
 PREDICT_ENDPOINT = f"{API_URL_BASE}/predict/"
-DETAILS_ENDPOINT = f"{API_URL_BASE}/client_details/"  # Pour usage futur
-SHAP_ENDPOINT = f"{API_URL_BASE}/shap_values/"        # Pour usage futur
+DETAILS_ENDPOINT = f"{API_URL_BASE}/client/"  # Mise à jour pour correspondre à la nouvelle structure
+SHAP_ENDPOINT = f"{API_URL_BASE}/shap_values/"  # Ajout du nouvel endpoint SHAP
 
 # Paramètres du modèle
 DEFAULT_THRESHOLD = 0.52  # Seuil optimal déterminé précédemment
