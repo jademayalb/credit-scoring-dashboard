@@ -40,18 +40,21 @@ def get_client_prediction(client_id: int) -> Optional[Dict[str, Any]]:
         
         if response.status_code == 200:
             data = response.json()
+            logger.info(f"Réponse brute de l'API: {data}")
             
             # Standardisation des noms de clés pour l'interface interne
+            # Ajuster pour correspondre aux clés de la nouvelle API SHAP
             result = {
                 "client_id": int(client_id),
-                "probability": data.get("probabilite_defaut"),
-                "threshold": data.get("seuil_optimal", DEFAULT_THRESHOLD),
+                # Utiliser les nouvelles clés (probability) ou les anciennes (probabilite_defaut) avec fallback
+                "probability": data.get("probability", data.get("probabilite_defaut", 0)),
+                "threshold": data.get("threshold", data.get("seuil_optimal", DEFAULT_THRESHOLD)),
                 "decision": data.get("decision", "INCONNU"),
                 "model_name": data.get("model_name", ""),
                 "raw_data": data  # Conservation des données brutes
             }
             
-            logger.info(f"Prédiction récupérée avec succès pour le client {client_id}")
+            logger.info(f"Prédiction structurée: {result}")
             return result
         elif response.status_code == 404:
             logger.warning(f"Client {client_id} non trouvé dans l'API")
