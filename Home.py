@@ -1,7 +1,6 @@
 """
 Dashboard de Scoring Crédit pour Chargés de Relation Client
 Facilite l'explication des décisions de crédit aux clients et leur révision si nécessaire
-Dernière mise à jour: 2025-10-10
 """
 
 import streamlit as st
@@ -21,7 +20,7 @@ from config import (
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Outil d'Analyse pour Chargés de Relation Client",  # Titre descriptif adapté au public cible
+    page_title="Outil d'Analyse pour Chargés de Relation Client",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -195,25 +194,26 @@ def display_client_overview(client_id):
             probability = prediction.get('probability', 0)
             threshold = prediction.get('threshold', DEFAULT_THRESHOLD)
             
-            # Jauge claire pour faciliter l'explication au client
+            # CORRECTION: Jauge claire pour faciliter l'explication au client
+            # Valeurs en pourcentage pour plus de clarté
             fig = go.Figure(go.Indicator(
                 mode="gauge+number",
-                value=probability,
+                value=probability * 100,  # Convertir en pourcentage pour l'affichage
                 domain={'x': [0, 1], 'y': [0, 1]},
                 title={'text': "Probabilité de défaut", 'font': {'size': 18}},
                 number={'suffix': "%", 'valueformat': ".1f", 'font': {'size': 20}},
                 gauge={
-                    'axis': {'range': [0, 1], 'ticksuffix': "%", 'tickformat': ".0%"},
+                    'axis': {'range': [0, 100], 'ticksuffix': "%", 'tickformat': ".0f"},  # Échelle de 0 à 100%
                     'bar': {'color': COLORBLIND_FRIENDLY_PALETTE['primary']},
                     'bgcolor': "white",
                     'steps': [
-                        {'range': [0, threshold], 'color': COLORBLIND_FRIENDLY_PALETTE['positive']},
-                        {'range': [threshold, 1], 'color': COLORBLIND_FRIENDLY_PALETTE['negative']}
+                        {'range': [0, threshold * 100], 'color': COLORBLIND_FRIENDLY_PALETTE['positive']},
+                        {'range': [threshold * 100, 100], 'color': COLORBLIND_FRIENDLY_PALETTE['negative']}
                     ],
                     'threshold': {
                         'line': {'color': COLORBLIND_FRIENDLY_PALETTE['threshold'], 'width': 2},
                         'thickness': 0.75,
-                        'value': threshold
+                        'value': threshold * 100  # Seuil en pourcentage
                     }
                 }
             ))
@@ -411,7 +411,7 @@ st.markdown(f"""
 <hr>
 <div style="text-align: center; color: #666;">
     <small>
-        Outil d'analyse pour chargés de relation client | {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')} | 
+        Outil d'analyse pour chargés de relation client | 2025-10-10 08:47:37 | 
         <span aria-label="Symbole monétaire utilisé: Rouble russe">Montants en roubles (₽)</span> | 
         Contact support: poste 4242
     </small>
