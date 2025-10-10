@@ -30,24 +30,6 @@ try:
     poly_transformer = model_data.get('poly_transformer', None)
     test_df = pd.read_csv(TEST_CSV_PATH)
     
-    # Initialiser l'explainer SHAP
-    if hasattr(model, 'predict_proba'):
-        try:
-            # Créer l'explainer avec un sous-ensemble des données
-            # Limiter la taille pour des raisons de performance
-            sample_size = min(1000, len(test_df))
-            sample_data = test_df.sample(sample_size, random_state=42)
-            
-            # Le préprocessing sera fait plus tard car nous avons besoin de la fonction preprocess définie
-            logging.info("SHAP sera initialisé après définition de la fonction preprocess.")
-            explainer = None  # Temporairement
-        except Exception as e:
-            logging.error(f"Erreur lors de la préparation pour SHAP: {e}")
-            explainer = None
-    else:
-        logging.warning("Le modèle ne supporte pas SHAP directement.")
-        explainer = None
-        
     logging.info("Modèle et artefacts chargés avec succès.")
 except Exception as e:
     logging.error(f"Erreur lors du chargement du modèle ou des artefacts : {e}")
@@ -96,19 +78,12 @@ try:
         sample_scaled = scaler.transform(sample_imputed)
         
         try:
-            # Première tentative: avec le modèle scikit-learn complet
+            # Utiliser TreeExplainer sans vérification d'additivité
             explainer = shap.TreeExplainer(model, check_additivity=False)
             logging.info("Explainer SHAP initialisé avec TreeExplainer.")
         except Exception as e1:
-            logging.warning(f"TreeExplainer a échoué, tentative avec KernelExplainer: {e1}")
-            try:
-                # Deuxième tentative: avec KernelExplainer qui est plus robuste
-                predict_fn = lambda x: model.predict_proba(x)[:,1]
-                explainer = shap.KernelExplainer(predict_fn, sample_scaled[:20])
-                logging.info("Explainer SHAP initialisé avec KernelExplainer.")
-            except Exception as e2:
-                logging.error(f"Toutes les tentatives d'initialisation SHAP ont échoué: {e2}")
-                explainer = None
+            logging.warning(f"TreeExplainer a échoué: {e1}")
+            explainer = None
     else:
         logging.warning("Le modèle ne supporte pas predict_proba, SHAP ne sera pas disponible.")
         explainer = None
@@ -166,8 +141,9 @@ def get_shap_values(client_id):
             logging.warning(f"L'explainer SHAP n'est pas disponible pour le client {client_id}")
             return jsonify({
                 "erreur": "L'explainer SHAP n'est pas disponible",
+                "message": "Impossible de calculer les explications SHAP pour ce modèle",
                 "status": "ERROR"
-            }), 500
+            }), 503  # Service temporairement indisponible
         
         # Récupérer les données du client
         client_row = test_df[test_df['SK_ID_CURR'] == client_id]
@@ -191,7 +167,6 @@ def get_shap_values(client_id):
             shap_values = shap_values[1]  # Classe positive (défaut de paiement)
         
         # Créer un dictionnaire des valeurs SHAP par feature
-        # Sélectionner les features les plus importantes pour la lisibilité
         shap_dict = {}
         
         # Mapper chaque valeur SHAP à sa feature
