@@ -8,6 +8,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import time
+import os
 from typing import Dict, List, Optional, Any, Union
 import logging
 
@@ -47,17 +48,15 @@ def get_client_prediction(client_id: int) -> Optional[Dict[str, Any]]:
                 "raw_data": data  # Conservation des données brutes
             }
             
+            logger.info(f"Prédiction récupérée avec succès pour le client {client_id}")
             return result
         elif response.status_code == 404:
-            st.error(f"Client {client_id} non trouvé dans la base de données.")
-            logger.warning(f"Client {client_id} non trouvé")
+            logger.warning(f"Client {client_id} non trouvé dans l'API")
             return None
         else:
-            st.error(f"Erreur lors de l'appel à l'API: {response.status_code}")
             logger.error(f"Erreur API {response.status_code}: {response.text}")
             return None
     except Exception as e:
-        st.error(f"Erreur de connexion à l'API: {e}")
         logger.exception(f"Exception lors de l'appel API pour client {client_id}")
         return None
 
@@ -74,9 +73,31 @@ def get_client_details(client_id: int) -> Optional[Dict[str, Any]]:
         Dictionnaire contenant les détails du client ou None en cas d'erreur
     """
     try:
-        # Chargement du CSV avec le chemin correct
-        df = pd.read_csv("credit-scoring-dashboard/data/application_test.csv")
+        # Liste des chemins possibles pour trouver le CSV
+        possible_paths = [
+            "data/application_test.csv",                   # Si exécuté depuis credit-scoring-dashboard/
+            "application_test.csv",                        # Si exécuté depuis credit-scoring-dashboard/data/
+            "credit-scoring-dashboard/data/application_test.csv",  # Si exécuté depuis le répertoire parent
+            "../data/application_test.csv"                 # Si exécuté depuis un sous-répertoire
+        ]
         
+        # Essayer chaque chemin jusqu'à trouver le fichier
+        df = None
+        for path in possible_paths:
+            try:
+                if os.path.exists(path):
+                    logger.info(f"CSV trouvé à: {path}")
+                    df = pd.read_csv(path)
+                    logger.info(f"CSV chargé avec succès depuis: {path}")
+                    break
+            except Exception as e:
+                logger.debug(f"Impossible de charger le CSV depuis {path}: {str(e)}")
+                continue
+        
+        if df is None:
+            logger.error("Impossible de trouver le fichier CSV")
+            return None
+            
         # Filtrage pour le client spécifique
         client_data = df[df['SK_ID_CURR'] == client_id]
         
@@ -86,6 +107,7 @@ def get_client_details(client_id: int) -> Optional[Dict[str, Any]]:
             
         # Extraction des données en un seul passage
         client = client_data.iloc[0]
+        logger.info(f"Données du client {client_id} extraites avec succès")
         
         # Calcul de l'âge à partir de DAYS_BIRTH (valeur négative en jours)
         age = abs(int(client['DAYS_BIRTH'] / 365)) if 'DAYS_BIRTH' in client else 0
@@ -150,6 +172,7 @@ def get_feature_importance(client_id: int) -> Optional[Dict[str, float]]:
     details = get_client_details(client_id)
     
     if not prediction or not details:
+        logger.warning(f"Impossible de générer les valeurs SHAP pour le client {client_id}: données manquantes")
         return None
     
     # Simulons les valeurs SHAP basées sur les vraies données du client
@@ -182,6 +205,7 @@ def get_feature_importance(client_id: int) -> Optional[Dict[str, float]]:
         "CREDIT_INCOME_RATIO": 0.18 * (features["CREDIT_INCOME_RATIO"] / 3) * direction
     }
     
+    logger.info(f"Valeurs SHAP générées avec succès pour le client {client_id}")
     return shap_values
 
 # Liste des clients disponibles depuis le CSV
@@ -197,11 +221,33 @@ def get_available_clients(limit: int = 100) -> List[int]:
         Liste des ID clients disponibles
     """
     try:
-        # Chargement du CSV avec le chemin correct
-        df = pd.read_csv("credit-scoring-dashboard/data/application_test.csv")
+        # Liste des chemins possibles pour trouver le CSV
+        possible_paths = [
+            "data/application_test.csv",
+            "application_test.csv",
+            "credit-scoring-dashboard/data/application_test.csv",
+            "../data/application_test.csv"
+        ]
+        
+        # Essayer chaque chemin jusqu'à trouver le fichier
+        df = None
+        for path in possible_paths:
+            try:
+                if os.path.exists(path):
+                    df = pd.read_csv(path)
+                    logger.info(f"CSV chargé avec succès pour la liste des clients depuis: {path}")
+                    break
+            except Exception as e:
+                continue
+        
+        if df is None:
+            logger.error("Impossible de trouver le fichier CSV pour la liste des clients")
+            # Retourne une liste par défaut en cas d'erreur
+            return [100001, 100005, 100013, 100028, 100038, 100042, 100057, 100069, 100074, 100083]
         
         # Récupération des IDs client
         client_ids = df['SK_ID_CURR'].sort_values().tolist()
+        logger.info(f"{len(client_ids)} IDs clients récupérés, limités à {min(limit, len(client_ids))}")
         
         return client_ids[:limit]
     except Exception as e:
