@@ -3,18 +3,29 @@
 # URLs des APIs
 API_URL_BASE = "https://credit-scoring-jademayalb-db8bcc609fed.herokuapp.com"
 PREDICT_ENDPOINT = f"{API_URL_BASE}/predict/"
-DETAILS_ENDPOINT = f"{API_URL_BASE}/client_details/"
-SHAP_ENDPOINT = f"{API_URL_BASE}/shap_values/"
+DETAILS_ENDPOINT = f"{API_URL_BASE}/client_details/"  # Pour usage futur
+SHAP_ENDPOINT = f"{API_URL_BASE}/shap_values/"        # Pour usage futur
 
 # Paramètres du modèle
 DEFAULT_THRESHOLD = 0.52  # Seuil optimal déterminé précédemment
 
-# Configuration des graphiques
+# Chemins possibles pour les fichiers CSV
+CSV_PATHS = [
+    "data/application_test.csv",                      # Si exécuté depuis credit-scoring-dashboard/
+    "application_test.csv",                           # Si exécuté depuis credit-scoring-dashboard/data/
+    "credit-scoring-dashboard/data/application_test.csv",  # Si exécuté depuis le répertoire parent
+    "../data/application_test.csv"                    # Si exécuté depuis un sous-répertoire
+]
+
+# Configuration des graphiques et interface
 COLORBLIND_FRIENDLY_PALETTE = {
-    "positive": "#018571",  # Vert-bleu
-    "negative": "#a6611a",  # Brun
-    "neutral": "#80cdc1",   # Turquoise clair
-    "threshold": "#404040"  # Gris foncé
+    "positive": "#018571",  # Vert-bleu (pour les valeurs favorables)
+    "negative": "#a6611a",  # Brun (pour les valeurs défavorables)
+    "neutral": "#80cdc1",   # Turquoise clair (pour les valeurs neutres)
+    "threshold": "#404040", # Gris foncé (pour les seuils)
+    "primary": "#3366ff",   # Bleu (couleur principale pour graphiques)
+    "accepted": "#018571",  # Vert-bleu (pour décisions "Accepté")
+    "refused": "#a6611a"    # Brun (pour décisions "Refusé")
 }
 
 # Descriptions des features principales pour l'accessibilité
@@ -29,4 +40,13 @@ FEATURE_DESCRIPTIONS = {
     "AMT_CREDIT": "Montant du crédit demandé",
     "PAYMENT_RATE": "Taux de paiement (annuité/crédit)",
     "CREDIT_INCOME_RATIO": "Ratio crédit/revenu"
+}
+
+# Paramètres de l'interface utilisateur
+UI_CONFIG = {
+    "default_limit": 100,            # Nombre maximum de clients à afficher par défaut
+    "chart_height": 300,             # Hauteur par défaut des graphiques
+    "max_features_display": 10,      # Nombre maximum de features à afficher dans les visualisations
+    "currency_symbol": "₽",          # Symbole de la monnaie (rouble)
+    "locale": "fr_FR"                # Paramètres régionaux pour le formatage des nombres
 }

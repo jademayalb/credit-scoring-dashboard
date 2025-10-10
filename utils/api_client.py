@@ -13,7 +13,10 @@ from typing import Dict, List, Optional, Any, Union
 import logging
 
 # Import de la configuration
-from config import API_URL_BASE, PREDICT_ENDPOINT, DEFAULT_THRESHOLD, FEATURE_DESCRIPTIONS
+from config import (
+    API_URL_BASE, PREDICT_ENDPOINT, SHAP_ENDPOINT, DEFAULT_THRESHOLD, 
+    FEATURE_DESCRIPTIONS, CSV_PATHS
+)
 
 # Configuration du logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -73,17 +76,9 @@ def get_client_details(client_id: int) -> Optional[Dict[str, Any]]:
         Dictionnaire contenant les détails du client ou None en cas d'erreur
     """
     try:
-        # Liste des chemins possibles pour trouver le CSV
-        possible_paths = [
-            "data/application_test.csv",                   # Si exécuté depuis credit-scoring-dashboard/
-            "application_test.csv",                        # Si exécuté depuis credit-scoring-dashboard/data/
-            "credit-scoring-dashboard/data/application_test.csv",  # Si exécuté depuis le répertoire parent
-            "../data/application_test.csv"                 # Si exécuté depuis un sous-répertoire
-        ]
-        
         # Essayer chaque chemin jusqu'à trouver le fichier
         df = None
-        for path in possible_paths:
+        for path in CSV_PATHS:
             try:
                 if os.path.exists(path):
                     logger.info(f"CSV trouvé à: {path}")
@@ -156,57 +151,41 @@ def get_client_details(client_id: int) -> Optional[Dict[str, Any]]:
 @st.cache_data(ttl=3600)
 def get_feature_importance(client_id: int) -> Optional[Dict[str, float]]:
     """
-    Génère des valeurs d'importance des features basées sur les données du client.
+    Récupère les valeurs SHAP (importance des features) depuis l'API.
     
     Args:
         client_id: Identifiant unique du client
         
     Returns:
-        Dictionnaire avec les noms de features comme clés et les valeurs SHAP comme valeurs
+        Dictionnaire avec les noms de features comme clés et les valeurs SHAP comme valeurs,
+        ou None si les valeurs SHAP ne peuvent pas être récupérées.
     """
-    # Pour l'instant, nous simulons les valeurs SHAP
-    # Dans une future itération, vous pourriez étendre l'API pour calculer ces valeurs
-    
-    # On récupère d'abord la prédiction et les détails client
-    prediction = get_client_prediction(client_id)
-    details = get_client_details(client_id)
-    
-    if not prediction or not details:
-        logger.warning(f"Impossible de générer les valeurs SHAP pour le client {client_id}: données manquantes")
+    try:
+        logger.info(f"Récupération des valeurs SHAP pour le client {client_id}")
+        response = requests.get(f"{SHAP_ENDPOINT}{client_id}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Extraire les valeurs SHAP de la réponse
+            if "shap_values" in data and data["status"] == "OK":
+                shap_values = data["shap_values"]
+                logger.info(f"Valeurs SHAP récupérées avec succès pour le client {client_id}")
+                return shap_values
+            else:
+                logger.error(f"Format de réponse SHAP inattendu pour le client {client_id}")
+                return None
+                
+        elif response.status_code == 404:
+            logger.warning(f"Valeurs SHAP non trouvées pour le client {client_id}")
+            return None
+        else:
+            logger.error(f"Erreur API {response.status_code} lors de la récupération des valeurs SHAP: {response.text}")
+            return None
+            
+    except Exception as e:
+        logger.exception(f"Exception lors de la récupération des valeurs SHAP pour client {client_id}")
         return None
-    
-    # Simulons les valeurs SHAP basées sur les vraies données du client
-    features = details["features"]
-    
-    # Direction du SHAP basée sur la décision (positif = défaut, négatif = non-défaut)
-    direction = 1 if prediction.get("decision") == "REFUSÉ" else -1
-    
-    # Valeurs SHAP générées semi-aléatoirement mais cohérentes avec les données et la décision
-    shap_values = {
-        # Les sources externes ont généralement un impact important et négatif (plus le score est élevé, moins de risque)
-        "EXT_SOURCE_3": -0.35 * (features["EXT_SOURCE_3"] / 0.5) * direction,
-        "EXT_SOURCE_2": -0.28 * (features["EXT_SOURCE_2"] / 0.5) * direction,
-        "EXT_SOURCE_1": -0.15 * (features["EXT_SOURCE_1"] / 0.5) * direction if "EXT_SOURCE_1" in features else 0,
-        
-        # L'âge (plus âgé = moins risqué)
-        "DAYS_BIRTH": -0.12 * (abs(features["DAYS_BIRTH"]) / 15000) * direction,
-        
-        # Temps d'emploi (plus long = moins risqué)
-        "DAYS_EMPLOYED": -0.10 * (abs(features["DAYS_EMPLOYED"]) / 5000) * direction if features["DAYS_EMPLOYED"] != 365243 else 0,
-        
-        # Revenu (plus élevé = moins risqué)
-        "AMT_INCOME_TOTAL": -0.08 * (features["AMT_INCOME_TOTAL"] / 200000) * direction,
-        
-        # Montant du crédit (plus élevé = plus risqué)
-        "AMT_CREDIT": 0.14 * (features["AMT_CREDIT"] / 1000000) * direction,
-        
-        # Ratios calculés
-        "PAYMENT_RATE": -0.09 * (features["PAYMENT_RATE"] / 0.1) * direction,
-        "CREDIT_INCOME_RATIO": 0.18 * (features["CREDIT_INCOME_RATIO"] / 3) * direction
-    }
-    
-    logger.info(f"Valeurs SHAP générées avec succès pour le client {client_id}")
-    return shap_values
 
 # Liste des clients disponibles depuis le CSV
 @st.cache_data(ttl=86400)  # Mise en cache pour 24 heures
@@ -218,20 +197,12 @@ def get_available_clients(limit: int = 100) -> List[int]:
         limit: Nombre maximum de clients à récupérer
         
     Returns:
-        Liste des ID clients disponibles
+        Liste des ID clients disponibles ou liste vide en cas d'erreur
     """
     try:
-        # Liste des chemins possibles pour trouver le CSV
-        possible_paths = [
-            "data/application_test.csv",
-            "application_test.csv",
-            "credit-scoring-dashboard/data/application_test.csv",
-            "../data/application_test.csv"
-        ]
-        
         # Essayer chaque chemin jusqu'à trouver le fichier
         df = None
-        for path in possible_paths:
+        for path in CSV_PATHS:
             try:
                 if os.path.exists(path):
                     df = pd.read_csv(path)
@@ -242,8 +213,8 @@ def get_available_clients(limit: int = 100) -> List[int]:
         
         if df is None:
             logger.error("Impossible de trouver le fichier CSV pour la liste des clients")
-            # Retourne une liste par défaut en cas d'erreur
-            return [100001, 100005, 100013, 100028, 100038, 100042, 100057, 100069, 100074, 100083]
+            # Retourner une liste vide au lieu d'une liste par défaut
+            return []
         
         # Récupération des IDs client
         client_ids = df['SK_ID_CURR'].sort_values().tolist()
@@ -252,5 +223,5 @@ def get_available_clients(limit: int = 100) -> List[int]:
         return client_ids[:limit]
     except Exception as e:
         logger.exception("Erreur lors de la récupération des clients disponibles")
-        # Retourne une liste par défaut en cas d'erreur
-        return [100001, 100005, 100013, 100028, 100038, 100042, 100057, 100069, 100074, 100083]
+        # Retourner une liste vide au lieu d'une liste par défaut
+        return []
