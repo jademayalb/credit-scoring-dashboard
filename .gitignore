@@ -9,3 +9,4 @@ ENV/
 .DS_Store
 *.csv
 *.xlsx
+**/.ipynb_checkpoints/
