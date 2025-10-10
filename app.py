@@ -89,16 +89,31 @@ def preprocess(df, features_model, poly_transformer=None):
 # Maintenant que preprocess est défini, initialiser l'explainer
 try:
     if hasattr(model, 'predict_proba'):
-        sample_size = min(1000, len(test_df))
+        sample_size = min(100, len(test_df))  # Réduire la taille pour accélérer
         sample_data = test_df.sample(sample_size, random_state=42)
         sample_processed = preprocess(sample_data, features, poly_transformer)
         sample_imputed = imputer.transform(sample_processed)
         sample_scaled = scaler.transform(sample_imputed)
         
-        explainer = shap.TreeExplainer(model)
-        logging.info("Explainer SHAP initialisé avec succès.")
+        try:
+            # Première tentative: avec le modèle scikit-learn complet
+            explainer = shap.TreeExplainer(model, check_additivity=False)
+            logging.info("Explainer SHAP initialisé avec TreeExplainer.")
+        except Exception as e1:
+            logging.warning(f"TreeExplainer a échoué, tentative avec KernelExplainer: {e1}")
+            try:
+                # Deuxième tentative: avec KernelExplainer qui est plus robuste
+                predict_fn = lambda x: model.predict_proba(x)[:,1]
+                explainer = shap.KernelExplainer(predict_fn, sample_scaled[:20])
+                logging.info("Explainer SHAP initialisé avec KernelExplainer.")
+            except Exception as e2:
+                logging.error(f"Toutes les tentatives d'initialisation SHAP ont échoué: {e2}")
+                explainer = None
+    else:
+        logging.warning("Le modèle ne supporte pas predict_proba, SHAP ne sera pas disponible.")
+        explainer = None
 except Exception as e:
-    logging.error(f"Erreur lors de l'initialisation de l'explainer SHAP: {e}")
+    logging.error(f"Erreur générale lors de l'initialisation de SHAP: {e}")
     explainer = None
 
 app = Flask(__name__)
