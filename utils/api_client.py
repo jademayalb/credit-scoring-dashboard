@@ -295,13 +295,19 @@ def _generate_mapped_feature_importance(client_id):
         
         # Format de présentation des valeurs réelles selon le type de feature
         display_value = real_value
-        if feature_name == "DAYS_BIRTH":
-            display_value = f"{abs(int(real_value / 365))} ans" if real_value != "N/A" else "N/A"
-        elif feature_name == "DAYS_EMPLOYED":
-            if real_value == 365243:
-                display_value = "Sans emploi"
-            elif real_value != "N/A":
+        if feature_name == "DAYS_BIRTH" and real_value != "N/A":
+            try:
                 display_value = f"{abs(int(real_value / 365))} ans" 
+            except:
+                display_value = "N/A"
+        elif feature_name == "DAYS_EMPLOYED" and real_value != "N/A":
+            try:
+                if real_value == 365243:
+                    display_value = "Sans emploi"
+                else:
+                    display_value = f"{abs(int(real_value / 365))} ans"
+            except:
+                display_value = "N/A"
                 
         # Créer l'objet de mapping
         mapped_feature = {
