@@ -5,6 +5,8 @@ API_URL_BASE = "https://credit-scoring-api-shap-jmb-bb42ec68fd62.herokuapp.com" 
 PREDICT_ENDPOINT = f"{API_URL_BASE}/predict/"
 DETAILS_ENDPOINT = f"{API_URL_BASE}/client/"  # Mise à jour pour correspondre à la nouvelle structure
 SHAP_ENDPOINT = f"{API_URL_BASE}/shap_values/"  # Ajout du nouvel endpoint SHAP
+CLIENTS_ENDPOINT = f"{API_URL_BASE}/clients"
+CLIENT_DETAILS_ENDPOINT = f"{API_URL_BASE}/client"
 
 # Paramètres du modèle
 DEFAULT_THRESHOLD = 0.52  # Seuil optimal déterminé précédemment
