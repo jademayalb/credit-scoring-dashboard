@@ -354,7 +354,7 @@ else:
             else:
                 st.markdown(f"**{feature}**: Pas de description disponible")
 
-# NOUVEAU GRAPHIQUE: Comparaison des probabilités de défaut avec une jauge visuelle - AMÉLIORÉ POUR L'ACCESSIBILITÉ
+# NOUVEAU GRAPHIQUE: Comparaison des probabilités de défaut avec une jauge visuelle - VERSION AMÉLIORÉE
 st.subheader("Comparaison des risques de défaut")
 
 # Récupérer le seuil pour tous les clients (ils devraient avoir le même)
@@ -369,55 +369,53 @@ sorted_clients = sorted(
     key=lambda x: x[1]
 )
 
-# Créer un graphique de type jauge/échelle avec une meilleure accessibilité
+# ========== VERSION ALTERNATIVE DU GRAPHIQUE ==========
+# Création d'un graphique horizontal plus simple et plus efficace pour l'accessibilité
 fig = go.Figure()
 
-# Définir les zones de risque avec couleurs à fort contraste
-fig.add_shape(
-    type="rect",
-    x0=0, x1=1, y0=0, y1=0.2,
-    fillcolor=COLORBLIND_FRIENDLY_PALETTE['accepted'],
-    opacity=0.4,
-    line=dict(width=0),
-    layer="below"
-)
-fig.add_shape(
-    type="rect",
-    x0=0, x1=1, y0=0.2, y1=0.4,
-    fillcolor=COLORBLIND_FRIENDLY_PALETTE['accepted'],
-    opacity=0.6,
-    line=dict(width=0),
-    layer="below"
-)
-fig.add_shape(
-    type="rect",
-    x0=0, x1=1, y0=0.4, y1=threshold,
-    fillcolor=COLORBLIND_FRIENDLY_PALETTE['accepted'],
-    opacity=0.8,
-    line=dict(width=0),
-    layer="below"
-)
-fig.add_shape(
-    type="rect",
-    x0=0, x1=1, y0=threshold, y1=0.7,
-    fillcolor=COLORBLIND_FRIENDLY_PALETTE['refused'],
-    opacity=0.6,
-    line=dict(width=0),
-    layer="below"
-)
-fig.add_shape(
-    type="rect",
-    x0=0, x1=1, y0=0.7, y1=1,
-    fillcolor=COLORBLIND_FRIENDLY_PALETTE['refused'],
-    opacity=0.8,
-    line=dict(width=0),
-    layer="below"
-)
+# Définir les différentes zones de risque
+risk_zones = [
+    {"name": "RISQUE TRÈS FAIBLE", "min": 0, "max": 0.2, "color": "rgba(1, 133, 113, 0.4)"},
+    {"name": "RISQUE FAIBLE", "min": 0.2, "max": 0.4, "color": "rgba(1, 133, 113, 0.6)"},
+    {"name": "RISQUE MODÉRÉ", "min": 0.4, "max": threshold, "color": "rgba(1, 133, 113, 0.8)"},
+    {"name": "RISQUE ÉLEVÉ", "min": threshold, "max": 0.7, "color": "rgba(166, 97, 26, 0.6)"},
+    {"name": "RISQUE TRÈS ÉLEVÉ", "min": 0.7, "max": 1, "color": "rgba(166, 97, 26, 0.8)"}
+]
 
-# Ajouter une ligne pour le seuil plus visible
+# Ajouter les zones de risque comme barres horizontales
+for zone in risk_zones:
+    fig.add_shape(
+        type="rect",
+        x0=zone["min"],
+        x1=zone["max"],
+        y0=-1,  # Position en bas
+        y1=len(sorted_clients),  # Hauteur en fonction du nombre de clients
+        fillcolor=zone["color"],
+        line=dict(width=0),
+        layer="below"
+    )
+    
+    # Ajouter une annotation pour chaque zone
+    fig.add_annotation(
+        x=(zone["min"] + zone["max"]) / 2,  # Centre de la zone
+        y=-1.5,  # Position sous l'axe
+        text=zone["name"],
+        showarrow=False,
+        font=dict(size=16, color='black', family='Arial', weight='bold'),
+        bgcolor='rgba(255, 255, 255, 0.8)',
+        bordercolor='black',
+        borderwidth=1,
+        borderpad=3,
+        align='center'
+    )
+
+# Ajouter une ligne pour le seuil
 fig.add_shape(
     type="line",
-    x0=0, x1=1, y0=threshold, y1=threshold,
+    x0=threshold,
+    x1=threshold,
+    y0=-2,
+    y1=len(sorted_clients),
     line=dict(
         color="black",
         width=3,
@@ -425,13 +423,12 @@ fig.add_shape(
     )
 )
 
-# Ajouter une annotation pour le seuil - PLUS GRAND ET PLUS VISIBLE
+# Ajouter une annotation pour le seuil
 fig.add_annotation(
-    x=1.02,
-    y=threshold,
+    x=threshold,
+    y=-2.5,
     text=f"SEUIL: {threshold:.2f}",
     showarrow=False,
-    xanchor="left",
     font=dict(
         size=18,
         color="black",
@@ -442,142 +439,72 @@ fig.add_annotation(
     bordercolor="black",
     borderwidth=1,
     borderpad=4,
-    align="left"
+    align='center'
 )
 
-# Ajouter les marqueurs de client
+# Ajouter des barres horizontales pour chaque client avec annotations
 for i, (client_id, probability) in enumerate(sorted_clients):
-    status = "ACCEPTÉ" if probability < threshold else "REFUSÉ"
-    color = COLORBLIND_FRIENDLY_PALETTE['accepted'] if status == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE['refused']
+    decision = "ACCEPTÉ" if probability < threshold else "REFUSÉ"
+    color = COLORBLIND_FRIENDLY_PALETTE['accepted'] if decision == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE['refused']
     
-    # Ajouter un marqueur pour chaque client avec étiquette plus visible
-    fig.add_trace(go.Scatter(
-        x=[0.5],
-        y=[probability],
-        mode="markers+text",
+    # Ajouter une barre horizontale pour ce client
+    fig.add_trace(go.Bar(
+        y=[i],  # Position verticale
+        x=[probability],  # Longueur de la barre (probabilité)
+        orientation='h',
         marker=dict(
-            symbol="circle",
-            size=25,
             color=color,
-            line=dict(
-                width=3,
-                color="white"
-            )
+            line=dict(color='rgba(0,0,0,0.5)', width=1)
         ),
-        text=[f"#{client_id}"],
-        textposition="middle right",
-        textfont=dict(
-            size=18,
-            color="black",
-            family="Arial",
-            weight="bold"
-        ),
+        text=f"Client #{client_id}: {probability:.1%}",
+        textposition='outside',
+        textfont=dict(size=14, color='black'),
+        hovertemplate=f"Client #{client_id}<br>Probabilité: {probability:.1%}<br>Décision: {decision}<extra></extra>",
         name=f"Client #{client_id}",
-        hovertemplate=f"Client #{client_id}<br>Probabilité: {probability:.1%}<br>Statut: {status}<extra></extra>",
-        showlegend=False  # Suppression de la légende comme demandé
+        showlegend=False
     ))
     
-    # Ajouter la probabilité près du marqueur pour plus de visibilité
+    # Ajouter une annotation avec l'ID client
     fig.add_annotation(
-        x=0.65,
-        y=probability,
-        text=f"{probability:.1%}",
+        x=-0.05,  # Légèrement à gauche de l'axe
+        y=i,
+        text=f"#{client_id}",
         showarrow=False,
-        font=dict(
-            size=16,
-            color="black",
-            family="Arial",
-            weight="bold"
-        ),
-        bgcolor="rgba(255, 255, 255, 0.8)",
-        bordercolor="black",
-        borderwidth=1,
-        borderpad=3
+        xanchor="right",
+        font=dict(size=14, color='black', family='Arial'),
+        bgcolor='white',
+        borderpad=2
     )
 
-# Configurer la mise en page pour assurer que toutes les annotations sont visibles
+# Configurer la mise en page du graphique
 fig.update_layout(
     title={
         'text': "Échelle de risque de défaut par client",
         'font': {'size': 24, 'family': 'Arial', 'color': 'black'}
     },
-    height=600,  # Augmenter la hauteur du graphique pour accommoder toutes les annotations
+    height=max(400, 100 + 50 * len(sorted_clients)),  # Ajuster la hauteur en fonction du nombre de clients
+    bargap=0.3,
     plot_bgcolor='rgba(0,0,0,0)',
-    margin=dict(l=20, r=150, t=70, b=50),  # Augmenter la marge droite pour les annotations
-    yaxis=dict(
-        title={
-            'text': "Probabilité de défaut",
-            'font': {'size': 18, 'family': 'Arial', 'color': 'black'}
-        },
-        range=[-0.05, 1.05],
+    margin=dict(l=60, r=30, t=80, b=100),
+    xaxis=dict(
+        title="Probabilité de défaut",
+        titlefont=dict(size=18),
+        range=[-0.1, 1.05],
         tickformat='.0%',
         tickvals=[0, 0.2, 0.4, threshold, 0.7, 1],
         ticktext=['0%', '20%', '40%', f'{threshold:.0%}', '70%', '100%'],
-        tickfont={'size': 16, 'family': 'Arial', 'color': 'black'}
+        tickfont=dict(size=14),
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(0,0,0,0.1)'
     ),
-    xaxis=dict(
-        visible=False,
-        range=[-0.2, 1.3]  # Élargir la plage pour les annotations
+    yaxis=dict(
+        title="",
+        showticklabels=False,
+        showgrid=False,
+        range=[-3, len(sorted_clients)]
     ),
-    showlegend=False,
-    annotations=[
-        # Annotations pour les zones de risque avec meilleur contraste et positionnement
-        dict(
-            x=-0.15, y=0.1,  # Positionnement ajusté
-            text="RISQUE TRÈS FAIBLE",
-            showarrow=False,
-            font=dict(size=16, color='black', family='Arial', weight='bold'),
-            bgcolor='rgba(255, 255, 255, 0.8)',
-            bordercolor='black',
-            borderwidth=1,
-            borderpad=3,
-            align='left'
-        ),
-        dict(
-            x=-0.15, y=0.3,  # Positionnement ajusté
-            text="RISQUE FAIBLE",
-            showarrow=False,
-            font=dict(size=16, color='black', family='Arial', weight='bold'),
-            bgcolor='rgba(255, 255, 255, 0.8)',
-            bordercolor='black',
-            borderwidth=1,
-            borderpad=3,
-            align='left'
-        ),
-        dict(
-            x=-0.15, y=threshold - 0.1,  # Positionnement ajusté
-            text="RISQUE MODÉRÉ",
-            showarrow=False,
-            font=dict(size=16, color='black', family='Arial', weight='bold'),
-            bgcolor='rgba(255, 255, 255, 0.8)',
-            bordercolor='black',
-            borderwidth=1,
-            borderpad=3,
-            align='left'
-        ),
-        dict(
-            x=-0.15, y=threshold + 0.1,  # Positionnement ajusté
-            text="RISQUE ÉLEVÉ",
-            showarrow=False,
-            font=dict(size=16, color='black', family='Arial', weight='bold'),
-            bgcolor='rgba(255, 255, 255, 0.8)',
-            bordercolor='black',
-            borderwidth=1,
-            borderpad=3,
-            align='left'
-        ),
-        dict(
-            x=-0.15, y=0.85,  # Positionnement ajusté
-            text="RISQUE TRÈS ÉLEVÉ",
-            showarrow=False,
-            font=dict(size=16, color='black', family='Arial', weight='bold'),
-            bgcolor='rgba(255, 255, 255, 0.8)',
-            bordercolor='black',
-            borderwidth=1,
-            borderpad=3,
-            align='left'
-        )
-    ]
+    showlegend=False
 )
 
 # Afficher le graphique
@@ -587,9 +514,9 @@ st.plotly_chart(fig, use_container_width=True)
 st.markdown("""
 **Comment interpréter cette échelle de risque:**
 - L'échelle représente la probabilité qu'un client ne rembourse pas son prêt, de 0% à 100%
-- La ligne pointillée indique le seuil au-delà duquel un prêt est généralement refusé
+- La ligne pointillée indique le seuil au-delà duquel un prêt est généralement refusé (52%)
 - Les zones de couleur représentent différents niveaux de risque (du vert au rouge)
-- Chaque point représente un client, positionné selon sa probabilité de défaut
+- Chaque barre représente un client, avec sa probabilité de défaut
 """)
 
 # Plus d'informations sur l'échelle de risque
