@@ -554,7 +554,6 @@ with tab2:
         st.info("Veuillez sélectionner au moins une caractéristique pour l'analyse comparative.")
 
 # Nouvel onglet pour l'analyse bivariée
-# Section pour l'analyse bivariée (à remplacer dans le code)
 with tab3:
     st.header("Analyse bivariée des caractéristiques")
     
@@ -651,7 +650,7 @@ with tab3:
                     symbol='circle',
                     line=dict(color='black', width=1)
                 ),
-                hovertemplate=f"<b>{x_display}</b>: %{{x}:.2f}<br><b>{y_display}</b>: %{{y}:.2f}<extra></extra>"
+                hovertemplate=f"<b>{x_display}</b>: {{x:.2f}}<br><b>{y_display}</b>: {{y:.2f}}<extra></extra>"
             )
             
             # Améliorer la mise en page
@@ -664,8 +663,7 @@ with tab3:
                     title=dict(text=y_display, font=dict(size=16)),
                     tickfont=dict(size=14)
                 ),
-                height=500,
-                width=800
+                height=500
             )
             
             # Afficher le graphique
