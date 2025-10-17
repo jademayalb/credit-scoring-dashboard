@@ -26,6 +26,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Fonction utilitaire pour convertir hex en rgba
+def hex_to_rgba(hex_color, opacity=0.4):
+    hex_color = hex_color.lstrip('#')
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    return f"rgba({r}, {g}, {b}, {opacity})"
+
 # Styles CSS pour l'accessibilité
 st.markdown("""
 <style>
@@ -685,12 +693,12 @@ with simulation_mode[0]:
                 # Création d'une jauge avant/après
                 fig = go.Figure()
                 
-                # Ajouter des zones de risque
+                # Ajouter des zones de risque avec format RGBA correct
                 fig.add_shape(
                     type="rect",
                     x0=0, x1=threshold,
                     y0=0, y1=1,
-                    fillcolor=COLORBLIND_FRIENDLY_PALETTE['accepted'] + "44",
+                    fillcolor=hex_to_rgba(COLORBLIND_FRIENDLY_PALETTE['accepted']),
                     line=dict(width=0),
                     layer="below"
                 )
@@ -698,7 +706,7 @@ with simulation_mode[0]:
                     type="rect",
                     x0=threshold, x1=1,
                     y0=0, y1=1,
-                    fillcolor=COLORBLIND_FRIENDLY_PALETTE['refused'] + "44",
+                    fillcolor=hex_to_rgba(COLORBLIND_FRIENDLY_PALETTE['refused']),
                     line=dict(width=0),
                     layer="below"
                 )
