@@ -15,7 +15,8 @@ import logging
 # Import de la configuration
 from config import (
     API_URL_BASE, PREDICT_ENDPOINT, SHAP_ENDPOINT, DEFAULT_THRESHOLD, 
-    FEATURE_DESCRIPTIONS, CSV_PATHS
+    FEATURE_DESCRIPTIONS, CSV_PATHS,
+    CLIENTS_ENDPOINT, CLIENT_DETAILS_ENDPOINT 
 )
 
 # Configuration du logging
@@ -66,11 +67,11 @@ def get_client_prediction(client_id: int) -> Optional[Dict[str, Any]]:
         logger.exception(f"Exception lors de l'appel API pour client {client_id}")
         return None
 
-# Fonction pour récupérer les détails d'un client depuis le CSV
+# Nouvelle fonction pour récupérer les détails client depuis l'API
 @st.cache_data(ttl=3600)
-def get_client_details(client_id: int) -> Optional[Dict[str, Any]]:
+def get_client_details_from_api(client_id: int) -> Optional[Dict[str, Any]]:
     """
-    Récupère les informations détaillées d'un client depuis le CSV d'application_test.
+    Récupère les informations détaillées d'un client depuis l'API.
     
     Args:
         client_id: Identifiant unique du client
@@ -78,6 +79,45 @@ def get_client_details(client_id: int) -> Optional[Dict[str, Any]]:
     Returns:
         Dictionnaire contenant les détails du client ou None en cas d'erreur
     """
+    try:
+        logger.info(f"Récupération des détails pour le client {client_id} depuis l'API")
+        response = requests.get(f"{CLIENT_DETAILS_ENDPOINT}{client_id}/details")
+        
+        if response.status_code == 200:
+            data = response.json()
+            logger.info(f"Détails du client {client_id} récupérés avec succès depuis l'API")
+            return data
+        elif response.status_code == 404:
+            logger.warning(f"Client {client_id} non trouvé dans l'API")
+            return None
+        else:
+            logger.warning(f"Erreur API {response.status_code}: {response.text}. Utilisation du fallback CSV.")
+            return None
+            
+    except Exception as e:
+        logger.exception(f"Exception lors de l'appel API pour client {client_id}.")
+        return None
+
+# Fonction existante modifiée pour utiliser l'API en priorité
+@st.cache_data(ttl=3600)
+def get_client_details(client_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Récupère les informations détaillées d'un client depuis l'API, avec fallback vers CSV.
+    
+    Args:
+        client_id: Identifiant unique du client
+        
+    Returns:
+        Dictionnaire contenant les détails du client ou None en cas d'erreur
+    """
+    # Essayer d'abord avec l'API
+    api_data = get_client_details_from_api(client_id)
+    if api_data:
+        return api_data
+        
+    # Si l'API échoue, utiliser la méthode originale basée sur CSV
+    logger.info(f"Utilisation du fallback CSV pour les détails du client {client_id}")
+    
     try:
         # Essayer chaque chemin jusqu'à trouver le fichier
         df = None
@@ -260,19 +300,59 @@ def _get_feature_importance_fallback(client_id):
             client_impacts[feature] = impact
     
     return client_impacts
-        
-# Liste des clients disponibles depuis le CSV
-@st.cache_data(ttl=86400)  # Mise en cache pour 24 heures
-def get_available_clients(limit: int = 100) -> List[int]:
+
+# Nouvelle fonction pour récupérer les clients disponibles depuis l'API
+@st.cache_data(ttl=3600)
+def get_available_clients_from_api(limit: int = 100, offset: int = 0) -> List[int]:
     """
-    Récupère la liste des ID clients disponibles dans l'application_test.csv.
+    Récupère la liste des ID clients disponibles depuis l'API.
     
     Args:
         limit: Nombre maximum de clients à récupérer
+        offset: Index à partir duquel commencer la récupération
         
     Returns:
         Liste des ID clients disponibles ou liste vide en cas d'erreur
     """
+    try:
+        logger.info(f"Récupération de la liste des clients depuis l'API (limit={limit}, offset={offset})")
+        response = requests.get(f"{CLIENTS_ENDPOINT}?limit={limit}&offset={offset}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            client_ids = data.get("client_ids", [])
+            total = data.get("total", 0)
+            logger.info(f"{len(client_ids)}/{total} IDs clients récupérés depuis l'API")
+            return client_ids
+        else:
+            logger.warning(f"Erreur API {response.status_code}: {response.text}.")
+            return []
+            
+    except Exception as e:
+        logger.exception(f"Exception lors de l'appel API pour la liste des clients.")
+        return []
+        
+# Fonction existante modifiée pour utiliser l'API en priorité
+@st.cache_data(ttl=86400)  # Mise en cache pour 24 heures
+def get_available_clients(limit: int = 100, offset: int = 0) -> List[int]:
+    """
+    Récupère la liste des ID clients disponibles, prioritairement depuis l'API avec fallback vers CSV.
+    
+    Args:
+        limit: Nombre maximum de clients à récupérer
+        offset: Index à partir duquel commencer la récupération
+        
+    Returns:
+        Liste des ID clients disponibles ou liste vide en cas d'erreur
+    """
+    # Essayer d'abord avec l'API
+    api_clients = get_available_clients_from_api(limit, offset)
+    if api_clients:
+        return api_clients
+        
+    # Si l'API échoue, utiliser la méthode originale basée sur CSV
+    logger.info(f"Utilisation du fallback CSV pour la liste des clients")
+    
     try:
         # Essayer chaque chemin jusqu'à trouver le fichier
         df = None
@@ -299,3 +379,142 @@ def get_available_clients(limit: int = 100) -> List[int]:
         logger.exception("Erreur lors de la récupération des clients disponibles")
         # Retourner une liste vide au lieu d'une liste par défaut
         return []
+
+# Nouvelle fonction pour tester l'état de l'API
+def test_api_connection() -> Dict[str, Any]:
+    """
+    Teste la connexion à l'API et renvoie l'état de chaque endpoint.
+    
+    Returns:
+        dict: État de la connexion pour chaque endpoint
+    """
+    results = {
+        "status": "OK",
+        "endpoints": {}
+    }
+    
+    try:
+        # Test de l'endpoint clients
+        start_time = time.time()
+        response = requests.get(f"{CLIENTS_ENDPOINT}?limit=1")
+        response_time = time.time() - start_time
+        
+        if response.status_code == 200:
+            results["endpoints"]["clients"] = {
+                "status": "OK",
+                "response_time": response_time,
+                "total_clients": response.json().get("total", 0)
+            }
+        else:
+            results["status"] = "PARTIAL_ERROR"
+            results["endpoints"]["clients"] = {
+                "status": "ERROR",
+                "code": response.status_code
+            }
+            
+        # Utiliser un ID client standard pour les tests
+        client_id = 100001
+        
+        # Test de l'endpoint predict
+        start_time = time.time()
+        response = requests.get(f"{PREDICT_ENDPOINT}{client_id}")
+        response_time = time.time() - start_time
+        
+        if response.status_code == 200:
+            results["endpoints"]["predict"] = {
+                "status": "OK",
+                "response_time": response_time
+            }
+        else:
+            results["status"] = "PARTIAL_ERROR"
+            results["endpoints"]["predict"] = {
+                "status": "ERROR",
+                "code": response.status_code
+            }
+            
+        # Test de l'endpoint shap_values
+        start_time = time.time()
+        response = requests.get(f"{SHAP_ENDPOINT}{client_id}")
+        response_time = time.time() - start_time
+        
+        if response.status_code == 200:
+            results["endpoints"]["shap_values"] = {
+                "status": "OK",
+                "response_time": response_time,
+                "features_count": len(response.json().get("shap_values", {}))
+            }
+        else:
+            results["status"] = "PARTIAL_ERROR"
+            results["endpoints"]["shap_values"] = {
+                "status": "ERROR",
+                "code": response.status_code
+            }
+            
+        # Test de l'endpoint client_details
+        start_time = time.time()
+        response = requests.get(f"{CLIENT_DETAILS_ENDPOINT}{client_id}/details")
+        response_time = time.time() - start_time
+        
+        if response.status_code == 200:
+            results["endpoints"]["client_details"] = {
+                "status": "OK",
+                "response_time": response_time
+            }
+        else:
+            results["status"] = "PARTIAL_ERROR"
+            results["endpoints"]["client_details"] = {
+                "status": "ERROR",
+                "code": response.status_code
+            }
+            
+    except Exception as e:
+        results["status"] = "ERROR"
+        results["error"] = str(e)
+        logger.exception("Erreur lors du test de connexion à l'API")
+        
+    return results
+
+def display_api_status():
+    """
+    Affiche un widget de diagnostic pour tester la connexion à l'API.
+    À placer dans la sidebar de votre dashboard.
+    """
+    with st.sidebar.expander("🌐 Diagnostic API", expanded=False):
+        # Texte explicatif
+        st.write("Vérifier l'état des services API:")
+        
+        # Espace pour séparer
+        st.write("")
+        
+        # Utiliser un seul élément au lieu de colonnes pour maximiser la largeur
+        # Le bouton occupera toute la largeur disponible
+        if st.button("🔄 Tester", key="api_test", use_container_width=True):
+            with st.spinner("Test en cours..."):
+                # Tester la connexion à l'API
+                try:
+                    # Récupérer les URL de base depuis config.py
+                    from config import API_URL_BASE
+                    
+                    # Tester la connexion
+                    import requests
+                    import time
+                    start_time = time.time()
+                    response = requests.get(f"{API_URL_BASE}/health", timeout=5)
+                    response_time = time.time() - start_time
+                    
+                    if response.status_code == 200:
+                        st.success("✅ L'API est accessible")
+                        st.write(f"Temps de réponse: {response_time:.2f} secondes")
+                        
+                        # Afficher des infos supplémentaires si disponibles
+                        try:
+                            data = response.json()
+                            st.write(f"Version: {data.get('version', 'Non spécifiée')}")
+                            st.write(f"Modèle: {data.get('model', 'Non spécifié')}")
+                        except:
+                            pass
+                    else:
+                        st.warning(f"⚠️ L'API a répondu avec le code {response.status_code}")
+                except Exception as e:
+                    st.error(f"❌ Impossible de se connecter à l'API: {str(e)}")
+                    st.info("Vérifiez que l'API est bien démarrée et accessible.")
