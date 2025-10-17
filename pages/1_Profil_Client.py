@@ -554,6 +554,7 @@ with tab2:
         st.info("Veuillez sélectionner au moins une caractéristique pour l'analyse comparative.")
 
 # Nouvel onglet pour l'analyse bivariée
+# Section pour l'analyse bivariée (à remplacer dans le code)
 with tab3:
     st.header("Analyse bivariée des caractéristiques")
     
@@ -594,7 +595,7 @@ with tab3:
     
     # Vérifier si les deux caractéristiques sont sélectionnées
     if x_feature and y_feature:
-        # Obtenir les données pour créer le nuage de points
+        # Obtenir les données pour l'analyse bivariée
         x_value = features_dict.get(x_feature)
         y_value = features_dict.get(y_feature)
         
@@ -625,23 +626,20 @@ with tab3:
                 y_value = abs(y_value) / 365.25
                 y_display = "Ancienneté d'emploi (années)"
         
-        # Créer un DataFrame pour le point du client
-        client_point = pd.DataFrame({
-            "x": [x_value],
-            "y": [y_value]
-        })
-        
         # Création du graphique d'analyse bivariée
         try:
-            # Créer un nuage de points simple pour l'analyse bivariée
+            # Créer un graphique à partir d'un DataFrame avec un seul point
+            df = pd.DataFrame({
+                'x_value': [x_value],
+                'y_value': [y_value]
+            })
+            
+            # Création du graphique avec plotly express
             fig = px.scatter(
-                client_point,
-                x="x",
-                y="y",
-                labels={
-                    "x": x_display,
-                    "y": y_display
-                },
+                df,
+                x='x_value',
+                y='y_value',
+                labels={'x_value': x_display, 'y_value': y_display},
                 title=f"Relation entre {x_display} et {y_display}"
             )
             
@@ -653,82 +651,49 @@ with tab3:
                     symbol='circle',
                     line=dict(color='black', width=1)
                 ),
-                hovertemplate=f"<b>{x_display}</b>: %{{x:.2f}}<br><b>{y_display}</b>: %{{y:.2f}}<extra></extra>"
+                hovertemplate=f"<b>{x_display}</b>: %{{x}:.2f}<br><b>{y_display}</b>: %{{y}:.2f}<extra></extra>"
             )
             
-            # Ajouter une ligne de tendance pour illustrer la relation potentielle
-            # (bien que ce ne soit pas très pertinent avec un seul point, c'est illustratif)
-            
-            # Créer des points pour la ligne de tendance autour du point central
-            x_range = [x_value * 0.7, x_value * 1.3] if x_value != 0 else [-1, 1]
-            y_range = [y_value * 0.7, y_value * 1.3] if y_value != 0 else [-1, 1]
-            
-            # Ajouter la ligne de tendance
-            fig.add_shape(
-                type="line",
-                x0=x_range[0], y0=y_range[0],
-                x1=x_range[1], y1=y_range[1],
-                line=dict(color="rgba(0,0,0,0.3)", dash="dash", width=1)
-            )
-            
-            # Amélioration de la mise en page
+            # Améliorer la mise en page
             fig.update_layout(
                 xaxis=dict(
                     title=dict(text=x_display, font=dict(size=16)),
-                    tickfont=dict(size=14),
-                    zeroline=True,
-                    zerolinecolor='rgba(0,0,0,0.2)',
-                    gridcolor='rgba(0,0,0,0.05)'
+                    tickfont=dict(size=14)
                 ),
                 yaxis=dict(
                     title=dict(text=y_display, font=dict(size=16)),
-                    tickfont=dict(size=14),
-                    zeroline=True,
-                    zerolinecolor='rgba(0,0,0,0.2)',
-                    gridcolor='rgba(0,0,0,0.05)'
+                    tickfont=dict(size=14)
                 ),
-                title=dict(
-                    text=f"Relation entre {x_display} et {y_display}",
-                    font=dict(size=20),
-                    x=0.5,
-                    xanchor='center'
-                ),
-                hovermode='closest',
-                hoverlabel=dict(
-                    bgcolor="white",
-                    font_size=14,
-                    font_family="Arial"
-                ),
-                height=500
+                height=500,
+                width=800
             )
             
             # Afficher le graphique
             st.plotly_chart(fig, use_container_width=True)
             
-            # Analyse de la relation
+            # Afficher les valeurs numériques
             st.markdown(f"""
             <div style="background-color: #f8f9fa; padding: 1rem; border-radius: 0.5rem; border: 1px solid #dee2e6;">
                 <h4 style="margin-top: 0;">Analyse bivariée</h4>
-                <p>Cette visualisation montre la valeur du client pour les deux caractéristiques sélectionnées :</p>
+                <p>Valeurs du client pour les deux caractéristiques sélectionnées :</p>
                 <ul>
                     <li><strong>{x_display}</strong> : {x_value:.2f}</li>
                     <li><strong>{y_display}</strong> : {y_value:.2f}</li>
                 </ul>
-                <p>Pour une analyse plus détaillée, vous pouvez sélectionner différentes paires de caractéristiques.</p>
             </div>
             """, unsafe_allow_html=True)
             
-            # Description textuelle pour les lecteurs d'écran - Critère 1.1.1
+            # Description pour lecteurs d'écran
             st.markdown(f"""
             <div class="visually-hidden">
-                Graphique d'analyse bivariée montrant la relation entre {x_display} et {y_display}. 
+                Graphique d'analyse bivariée montrant la relation entre {x_display} et {y_display}.
                 Le client #{client_id} a une valeur de {x_value:.2f} pour {x_display} et {y_value:.2f} pour {y_display}.
             </div>
             """, unsafe_allow_html=True)
-            
+        
         except Exception as e:
             st.error(f"Impossible de générer le graphique d'analyse bivariée: {str(e)}")
-            st.info("Essayez de sélectionner d'autres caractéristiques ou vérifiez que les données sont bien numériques.")
+            st.info("Essayez de sélectionner d'autres caractéristiques ou vérifiez que les données sont numériques.")
     
     else:
         st.info("Veuillez sélectionner deux caractéristiques différentes pour visualiser leur relation.")
