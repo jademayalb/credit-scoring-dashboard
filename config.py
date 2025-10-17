@@ -1,7 +1,7 @@
 """Configuration globale de l'application."""
 
 # URLs des APIs
-API_URL_BASE = "https://credit-scoring-api-shap-jmb-bb42ec68fd62.herokuapp.com"  # Nouvelle URL
+API_URL_BASE = "https://api-shap-jademayalb-2a1c1dd6f4bd.herokuapp.com"  # Nouvelle URL
 PREDICT_ENDPOINT = f"{API_URL_BASE}/predict/"
 DETAILS_ENDPOINT = f"{API_URL_BASE}/client/"  # Mise à jour pour correspondre à la nouvelle structure
 SHAP_ENDPOINT = f"{API_URL_BASE}/shap_values/"  # Ajout du nouvel endpoint SHAP
@@ -33,9 +33,9 @@ COLORBLIND_FRIENDLY_PALETTE = {
 # Descriptions des features principales pour l'accessibilité
 FEATURE_DESCRIPTIONS = {
     # Top features généralement importantes dans les modèles de scoring crédit
-    "EXT_SOURCE_3": "Score externe 3 (plus élevé = meilleur risque)",
-    "EXT_SOURCE_2": "Score externe 2 (plus élevé = meilleur risque)",
-    "EXT_SOURCE_1": "Score externe 1 (plus élevé = meilleur risque)",
+    "EXT_SOURCE_1": "Score normalisé - Source externe 1",
+    "EXT_SOURCE_2": "Score normalisé - Source externe 2", 
+    "EXT_SOURCE_3": "Score normalisé - Source externe 3",
     "DAYS_BIRTH": "Âge du client en jours (négatif)",
     "DAYS_EMPLOYED": "Ancienneté dans l'emploi actuel en jours (négatif)",
     "AMT_INCOME_TOTAL": "Revenu annuel déclaré",
