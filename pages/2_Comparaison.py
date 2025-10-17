@@ -120,7 +120,8 @@ selected_clients = st.multiselect(
     "Sélectionnez 2 à 4 clients à comparer:",
     options=available_clients,
     default=[available_clients[0], available_clients[1]] if len(available_clients) > 1 else [available_clients[0]],
-    max_selections=4
+    max_selections=4,
+    key="client_selection"  # Clé unique pour le widget
 )
 
 if len(selected_clients) < 2:
@@ -263,7 +264,8 @@ available_features = list(client_data[list(client_data.keys())[0]]["details"]["f
 selected_features = st.multiselect(
     "Sélectionnez les caractéristiques à comparer:",
     options=available_features,
-    default=["EXT_SOURCE_2", "EXT_SOURCE_3", "DAYS_BIRTH"]
+    default=["EXT_SOURCE_2", "EXT_SOURCE_3", "DAYS_BIRTH"],
+    key="features_selection"  # Clé unique pour le widget
 )
 
 if not selected_features:
@@ -333,7 +335,7 @@ else:
     )
     
     # Affichage du graphique
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="features_chart")
     
     # Explication des caractéristiques comparées
     with st.expander("Explication des caractéristiques"):
@@ -419,7 +421,7 @@ fig.update_traces(
 )
 
 # Affichage du graphique
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, use_container_width=True, key="probabilities_chart")
 
 # Explication du graphique
 st.markdown("""
@@ -433,9 +435,12 @@ st.markdown("""
 st.header("Analyse comparative")
 
 # Génération automatique d'un résumé comparatif simple
-st.write("### Résumé de la comparaison")
+st.write("### Résumé de la comparaison", key="comparison_title")
 
 if len(client_data) >= 2:
+    # Générer une clé unique basée sur les clients sélectionnés
+    comparison_key = "_".join(map(str, sorted(selected_clients)))
+    
     # Trouver le client avec la probabilité la plus basse (meilleur profil)
     best_client_id = min(client_data.items(), key=lambda x: x[1]["prediction"].get("probability", 1))[0]
     best_client_proba = client_data[best_client_id]["prediction"].get("probability", 0)
@@ -444,17 +449,20 @@ if len(client_data) >= 2:
     worst_client_id = max(client_data.items(), key=lambda x: x[1]["prediction"].get("probability", 0))[0]
     worst_client_proba = client_data[worst_client_id]["prediction"].get("probability", 0)
     
-    st.markdown(f"""
+    # Utiliser empty containers pour remplacer dynamiquement le contenu
+    summary_container = st.empty()
+    differences_container = st.container()
+    
+    summary_container.markdown(f"""
     D'après l'analyse comparative:
     
     - Le client #{best_client_id} présente le meilleur profil avec une probabilité de défaut de **{best_client_proba:.1%}**
     - Le client #{worst_client_id} présente le profil le plus risqué avec une probabilité de défaut de **{worst_client_proba:.1%}**
     
     Les principales différences observées concernent:
-    """)
+    """, key=f"summary_{comparison_key}")
     
     # Identifier les différences les plus marquantes
-    # Pour simplifier, nous comparons uniquement les deux profils extrêmes
     best_features = client_data[best_client_id]["details"]["features"]
     worst_features = client_data[worst_client_id]["details"]["features"]
     
@@ -473,28 +481,32 @@ if len(client_data) >= 2:
                 diff_pct = abs(best_age - worst_age) / max(best_age, worst_age) * 100
                 
                 if diff_pct > 10:  # Différence significative d'âge
-                    differences.append(f"- L'âge: **{best_age:.0f} ans** contre **{worst_age:.0f} ans**")
+                    differences.append((f"- L'âge: **{best_age:.0f} ans** contre **{worst_age:.0f} ans**", diff_pct))
             
             elif feature.startswith("EXT_SOURCE"):
                 diff_pct = abs(best_value - worst_value) / max(abs(best_value), abs(worst_value), 0.01) * 100
                 
                 if diff_pct > 15:  # Différence significative de score externe
-                    # Utiliser le nom descriptif si disponible
                     feature_name = FEATURE_DESCRIPTIONS.get(feature, feature)
-                    differences.append(f"- {feature_name}: **{best_value:.2f}** contre **{worst_value:.2f}**")
+                    differences.append((f"- {feature_name}: **{best_value:.2f}** contre **{worst_value:.2f}**", diff_pct))
             
             elif feature == "AMT_INCOME_TOTAL":
                 diff_pct = abs(best_value - worst_value) / max(abs(best_value), abs(worst_value), 0.01) * 100
                 
                 if diff_pct > 20:  # Différence significative de revenu
-                    differences.append(f"- Le revenu annuel: **{best_value:,.0f} {UI_CONFIG['currency_symbol']}** contre **{worst_value:,.0f} {UI_CONFIG['currency_symbol']}**")
+                    differences.append((f"- Le revenu annuel: **{best_value:,.0f} {UI_CONFIG['currency_symbol']}** contre **{worst_value:,.0f} {UI_CONFIG['currency_symbol']}**", diff_pct))
     
-    # Afficher les différences ou un message par défaut
-    if differences:
-        for diff in differences[:3]:  # Limiter à 3 différences pour la clarté
-            st.markdown(diff)
-    else:
-        st.markdown("- Les profils présentent des caractéristiques relativement similaires malgré les scores différents.")
+    # Trier les différences par importance
+    differences.sort(key=lambda x: x[1], reverse=True)
+    
+    with differences_container:
+        # Afficher les différences ou un message par défaut
+        if differences:
+            for i, (diff_text, _) in enumerate(differences[:3]):  # Limiter à 3 différences pour la clarté
+                st.markdown(diff_text, key=f"diff_{i}_{comparison_key}")
+        else:
+            st.markdown("- Les profils présentent des caractéristiques relativement similaires malgré les scores différents.", 
+                      key=f"no_diff_{comparison_key}")
     
 else:
     st.info("Sélectionnez au moins 2 clients pour obtenir une analyse comparative.")
