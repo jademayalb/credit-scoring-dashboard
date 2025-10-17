@@ -6,7 +6,7 @@ PREDICT_ENDPOINT = f"{API_URL_BASE}/predict/"
 DETAILS_ENDPOINT = f"{API_URL_BASE}/client/"  # Mise à jour pour correspondre à la nouvelle structure
 SHAP_ENDPOINT = f"{API_URL_BASE}/shap_values/"  # Ajout du nouvel endpoint SHAP
 CLIENTS_ENDPOINT = f"{API_URL_BASE}/clients"
-CLIENT_DETAILS_ENDPOINT = f"{API_URL_BASE}/client"
+CLIENT_DETAILS_ENDPOINT = f"{API_URL_BASE}/client/"  # Ajouter un slash à la fin
 
 # Paramètres du modèle
 DEFAULT_THRESHOLD = 0.52  # Seuil optimal déterminé précédemment
