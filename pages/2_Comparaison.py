@@ -78,6 +78,18 @@ st.markdown("""
         color: #ffffff !important;
         font-weight: 700 !important;
     }
+    
+    /* Style pour la jauge de score */
+    .score-gauge {
+        padding: 0.5rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    .score-marker {
+        font-size: 1.5rem;
+        font-weight: bold;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -264,12 +276,20 @@ st.dataframe(
 # Visualisation comparative
 st.subheader("Analyse comparative des caractéristiques")
 
+# Liste des features SHAP les plus importantes par défaut
+default_features = ["EXT_SOURCE_3", "EXT_SOURCE_2", "EXT_SOURCE_1", "AMT_GOODS_PRICE", "AMT_CREDIT"]
+
 # Sélection des caractéristiques à visualiser
 available_features = list(client_data[list(client_data.keys())[0]]["details"]["features"].keys())
+
+# Vérifier que les features par défaut existent dans les données
+default_features_available = [f for f in default_features if f in available_features]
+
+# Sélection des caractéristiques à visualiser avec les valeurs par défaut
 selected_features = st.multiselect(
     "Sélectionnez les caractéristiques à comparer:",
     options=available_features,
-    default=["EXT_SOURCE_2", "EXT_SOURCE_3", "DAYS_BIRTH"],
+    default=default_features_available,
     key=f"features_selection_{st.session_state.session_id}"
 )
 
@@ -350,166 +370,203 @@ else:
             else:
                 st.markdown(f"**{feature}**: Pas de description disponible")
 
-# Probabilités de défaut
-st.subheader("Comparaison des probabilités de défaut")
+# NOUVEAU GRAPHIQUE: Comparaison des probabilités de défaut avec une jauge visuelle
+st.subheader("Comparaison des risques de défaut")
 
-# Données pour le graphique
-proba_data = []
-for client_id, data in client_data.items():
-    probability = data["prediction"].get("probability", 0)
-    threshold = data["prediction"].get("threshold", 0.5)
-    
-    proba_data.append({
-        "client_id": f"Client #{client_id}",
-        "probability": probability
-    })
-
-# Création du dataframe
-proba_df = pd.DataFrame(proba_data)
-
-# Graphique de comparaison des probabilités
-fig = px.bar(
-    proba_df,
-    x="client_id",
-    y="probability",
-    color="client_id",
-    color_discrete_sequence=list(COLORBLIND_FRIENDLY_PALETTE.values())[:len(proba_df)],
-    labels={"probability": "Probabilité de défaut", "client_id": "Client"},
-    title="Probabilité de défaut par client"
-)
-
-# Ajout d'une ligne horizontale pour le seuil
+# Récupérer le seuil pour tous les clients (ils devraient avoir le même)
+threshold = 0.5
 if client_data:
     threshold = client_data[list(client_data.keys())[0]]["prediction"].get("threshold", 0.5)
-    fig.add_shape(
-        type="line",
-        x0=-0.5,
-        x1=len(proba_df) - 0.5,
-        y0=threshold,
-        y1=threshold,
-        line=dict(
-            color=COLORBLIND_FRIENDLY_PALETTE["threshold"],
-            width=2,
-            dash="dash",
-        )
+
+# Trier les clients par probabilité croissante
+sorted_clients = sorted(
+    [(client_id, data["prediction"].get("probability", 0)) 
+     for client_id, data in client_data.items()],
+    key=lambda x: x[1]
+)
+
+# Créer un graphique de type jauge/échelle
+fig = go.Figure()
+
+# Définir les zones de risque
+fig.add_shape(
+    type="rect",
+    x0=0, x1=1, y0=0, y1=0.2,
+    fillcolor=COLORBLIND_FRIENDLY_PALETTE['accepted'],
+    opacity=0.3,
+    line=dict(width=0),
+    layer="below"
+)
+fig.add_shape(
+    type="rect",
+    x0=0, x1=1, y0=0.2, y1=0.4,
+    fillcolor=COLORBLIND_FRIENDLY_PALETTE['accepted'],
+    opacity=0.5,
+    line=dict(width=0),
+    layer="below"
+)
+fig.add_shape(
+    type="rect",
+    x0=0, x1=1, y0=0.4, y1=threshold,
+    fillcolor=COLORBLIND_FRIENDLY_PALETTE['accepted'],
+    opacity=0.7,
+    line=dict(width=0),
+    layer="below"
+)
+fig.add_shape(
+    type="rect",
+    x0=0, x1=1, y0=threshold, y1=0.7,
+    fillcolor=COLORBLIND_FRIENDLY_PALETTE['refused'],
+    opacity=0.5,
+    line=dict(width=0),
+    layer="below"
+)
+fig.add_shape(
+    type="rect",
+    x0=0, x1=1, y0=0.7, y1=1,
+    fillcolor=COLORBLIND_FRIENDLY_PALETTE['refused'],
+    opacity=0.7,
+    line=dict(width=0),
+    layer="below"
+)
+
+# Ajouter une ligne pour le seuil
+fig.add_shape(
+    type="line",
+    x0=0, x1=1, y0=threshold, y1=threshold,
+    line=dict(
+        color="black",
+        width=2,
+        dash="dash",
     )
+)
+
+# Ajouter une annotation pour le seuil
+fig.add_annotation(
+    x=1.02,
+    y=threshold,
+    text=f"Seuil: {threshold:.2f}",
+    showarrow=False,
+    xanchor="left",
+    font=dict(
+        size=14,
+        color="black"
+    )
+)
+
+# Ajouter les marqueurs de client
+for i, (client_id, probability) in enumerate(sorted_clients):
+    status = "ACCEPTÉ" if probability < threshold else "REFUSÉ"
+    color = COLORBLIND_FRIENDLY_PALETTE['accepted'] if status == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE['refused']
     
-    # Ajouter une annotation pour le seuil
-    fig.add_annotation(
-        x=len(proba_df) - 1,
-        y=threshold * 1.1,
-        text=f"Seuil: {threshold:.2f}",
-        showarrow=False,
-        font=dict(
-            size=14,
-            color=COLORBLIND_FRIENDLY_PALETTE["threshold"]
-        )
-    )
+    # Ajouter un marqueur pour chaque client
+    fig.add_trace(go.Scatter(
+        x=[0.5],
+        y=[probability],
+        mode="markers+text",
+        marker=dict(
+            symbol="circle",
+            size=20,
+            color=color,
+            line=dict(
+                width=2,
+                color="white"
+            )
+        ),
+        text=[f"#{client_id}"],
+        textposition="middle right",
+        textfont=dict(
+            size=16,
+            color="black"
+        ),
+        name=f"Client #{client_id}",
+        hovertemplate=f"Client #{client_id}<br>Probabilité: {probability:.1%}<br>Statut: {status}<extra></extra>"
+    ))
 
-# Amélioration du graphique pour l'accessibilité
+# Configurer la mise en page
 fig.update_layout(
-    font_family="Arial",
-    font_size=14,
-    legend_title_font_size=16,
-    title_font_size=18,
+    title="Échelle de risque de défaut par client",
     height=400,
-    margin=dict(l=20, r=20, t=50, b=50)
+    plot_bgcolor='rgba(0,0,0,0)',
+    margin=dict(l=20, r=120, t=50, b=50),
+    yaxis=dict(
+        title="Probabilité de défaut",
+        range=[-0.05, 1.05],
+        tickformat='.0%',
+        tickvals=[0, 0.2, 0.4, threshold, 0.7, 1],
+        ticktext=['0%', '20%', '40%', f'{threshold:.0%}', '70%', '100%']
+    ),
+    xaxis=dict(
+        visible=False,
+        range=[-0.1, 1.1]
+    ),
+    showlegend=True,
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="center",
+        x=0.5
+    ),
+    annotations=[
+        dict(
+            x=0.05, y=0.1,
+            text="Risque très faible",
+            showarrow=False,
+            font=dict(size=12)
+        ),
+        dict(
+            x=0.05, y=0.3,
+            text="Risque faible",
+            showarrow=False,
+            font=dict(size=12)
+        ),
+        dict(
+            x=0.05, y=threshold - 0.1,
+            text="Risque modéré",
+            showarrow=False,
+            font=dict(size=12)
+        ),
+        dict(
+            x=0.05, y=threshold + 0.1,
+            text="Risque élevé",
+            showarrow=False,
+            font=dict(size=12)
+        ),
+        dict(
+            x=0.05, y=0.85,
+            text="Risque très élevé",
+            showarrow=False,
+            font=dict(size=12)
+        )
+    ]
 )
 
-# Format des étiquettes en pourcentage
-fig.update_yaxes(tickformat=".1%")
-
-# Ajouter les valeurs sur les barres
-fig.update_traces(
-    texttemplate='%{y:.1%}',
-    textposition='outside'
-)
-
-# Affichage du graphique
+# Afficher le graphique
 st.plotly_chart(fig, use_container_width=True)
 
 # Explication du graphique
 st.markdown("""
-**Comment interpréter ce graphique:**
-- Les barres représentent la probabilité qu'un client ne rembourse pas son prêt
-- La ligne pointillée montre le seuil au-delà duquel un prêt est généralement refusé
-- Plus la probabilité est basse, meilleur est le profil du client
+**Comment interpréter cette échelle de risque:**
+- L'échelle représente la probabilité qu'un client ne rembourse pas son prêt, de 0% à 100%
+- La ligne pointillée indique le seuil au-delà duquel un prêt est généralement refusé
+- Les zones de couleur représentent différents niveaux de risque (du vert au rouge)
+- Chaque point représente un client, positionné selon sa probabilité de défaut
 """)
 
-# Conclusion - CETTE PARTIE EST MODIFIÉE POUR RÉSOUDRE LE PROBLÈME
-st.header("Analyse comparative")
-
-# Génération automatique d'un résumé comparatif simple
-analysis_container = st.container()
-
-# Utiliser cette approche alternative pour forcer le rafraîchissement du contenu
-with analysis_container:
-    st.subheader("Résumé de la comparaison")
+# Plus d'informations sur l'échelle de risque
+with st.expander("En savoir plus sur l'échelle de risque"):
+    st.markdown("""
+    L'échelle de risque est divisée en 5 niveaux:
     
-    if len(client_data) >= 2:
-        # Trouver le client avec la probabilité la plus basse (meilleur profil)
-        best_client_id = min(client_data.items(), key=lambda x: x[1]["prediction"].get("probability", 1))[0]
-        best_client_proba = client_data[best_client_id]["prediction"].get("probability", 0)
-        
-        # Trouver le client avec la probabilité la plus haute (pire profil)
-        worst_client_id = max(client_data.items(), key=lambda x: x[1]["prediction"].get("probability", 0))[0]
-        worst_client_proba = client_data[worst_client_id]["prediction"].get("probability", 0)
-        
-        st.markdown(f"""
-        D'après l'analyse comparative:
-        
-        - Le client #{best_client_id} présente le meilleur profil avec une probabilité de défaut de **{best_client_proba:.1%}**
-        - Le client #{worst_client_id} présente le profil le plus risqué avec une probabilité de défaut de **{worst_client_proba:.1%}**
-        
-        Les principales différences observées concernent:
-        """)
-        
-        # Identifier les différences les plus marquantes
-        best_features = client_data[best_client_id]["details"]["features"]
-        worst_features = client_data[worst_client_id]["details"]["features"]
-        
-        # Comparaison des sources externes (généralement très importantes)
-        differences = []
-        
-        for feature in ["EXT_SOURCE_3", "EXT_SOURCE_2", "EXT_SOURCE_1", "DAYS_BIRTH", "AMT_INCOME_TOTAL"]:
-            if feature in best_features and feature in worst_features:
-                best_value = best_features[feature]
-                worst_value = worst_features[feature]
-                
-                # Format différent selon la feature
-                if feature == "DAYS_BIRTH":
-                    best_age = abs(best_value) / 365
-                    worst_age = abs(worst_value) / 365
-                    diff_pct = abs(best_age - worst_age) / max(best_age, worst_age) * 100
-                    
-                    if diff_pct > 10:  # Différence significative d'âge
-                        differences.append((f"- L'âge: **{best_age:.0f} ans** contre **{worst_age:.0f} ans**", diff_pct))
-                
-                elif feature.startswith("EXT_SOURCE"):
-                    diff_pct = abs(best_value - worst_value) / max(abs(best_value), abs(worst_value), 0.01) * 100
-                    
-                    if diff_pct > 15:  # Différence significative de score externe
-                        feature_name = FEATURE_DESCRIPTIONS.get(feature, feature)
-                        differences.append((f"- {feature_name}: **{best_value:.2f}** contre **{worst_value:.2f}**", diff_pct))
-                
-                elif feature == "AMT_INCOME_TOTAL":
-                    diff_pct = abs(best_value - worst_value) / max(abs(best_value), abs(worst_value), 0.01) * 100
-                    
-                    if diff_pct > 20:  # Différence significative de revenu
-                        differences.append((f"- Le revenu annuel: **{best_value:,.0f} {UI_CONFIG['currency_symbol']}** contre **{worst_value:,.0f} {UI_CONFIG['currency_symbol']}**", diff_pct))
-        
-        # Trier les différences par importance (pourcentage de différence)
-        differences.sort(key=lambda x: x[1], reverse=True)
-        
-        # Afficher les différences ou un message par défaut
-        if differences:
-            for diff_text, _ in differences[:3]:  # Limiter à 3 différences pour la clarté
-                st.markdown(diff_text)
-        else:
-            st.markdown("- Les profils présentent des caractéristiques relativement similaires malgré les scores différents.")
-        
-    else:
-        st.info("Sélectionnez au moins 2 clients pour obtenir une analyse comparative.")
+    1. **Risque très faible** (0-20%): Clients avec une excellente solvabilité, présentant un risque minimal de défaut.
+    2. **Risque faible** (20-40%): Clients avec une bonne solvabilité, présentant un faible risque de défaut.
+    3. **Risque modéré** (40-52%): Clients avec une solvabilité acceptable mais nécessitant une attention particulière.
+    4. **Risque élevé** (52-70%): Clients présentant un risque significatif de défaut, généralement refusés.
+    5. **Risque très élevé** (70-100%): Clients présentant un risque majeur de défaut, systématiquement refusés.
+    
+    Le seuil de décision (actuellement à {threshold:.0%}) est déterminé par le modèle pour optimiser l'équilibre entre l'acceptation de bons clients et le refus de clients à risque.
+    """)
 
 # Footer
 st.markdown("""
