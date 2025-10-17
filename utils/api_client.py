@@ -19,6 +19,9 @@ from config import (
     CLIENTS_ENDPOINT, CLIENT_DETAILS_ENDPOINT 
 )
 
+# Définir le nouvel endpoint pour les valeurs SHAP mappées
+SHAP_MAPPED_ENDPOINT = f"{API_URL_BASE}/shap_values_mapped/"
+
 # Configuration du logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -224,6 +227,99 @@ def get_feature_importance(client_id):
         logger.exception(f"Exception lors de la récupération des valeurs SHAP pour client {client_id}")
         # En cas d'exception, utiliser l'ancienne méthode comme fallback
         return _get_feature_importance_fallback(client_id)
+
+# Nouvelle fonction pour récupérer les valeurs SHAP mappées
+@st.cache_data(ttl=3600)
+def get_mapped_feature_importance(client_id):
+    """
+    Récupère les valeurs SHAP mappées avec les valeurs réelles pour un client spécifique depuis l'API
+    
+    Parameters:
+        client_id (int): Identifiant unique du client
+        
+    Returns:
+        list: Liste des features avec leurs valeurs SHAP et valeurs réelles, ou None en cas d'erreur
+    """
+    try:
+        logger.info(f"Récupération des valeurs SHAP mappées pour le client {client_id}")
+        response = requests.get(f"{SHAP_MAPPED_ENDPOINT}{client_id}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            mapped_shap_values = data.get("mapped_shap_values", [])
+            logger.info(f"Valeurs SHAP mappées récupérées avec succès pour client {client_id}")
+            return mapped_shap_values
+            
+        elif response.status_code == 404:
+            logger.warning(f"Client {client_id} non trouvé pour les valeurs SHAP mappées")
+            return None
+        else:
+            logger.error(f"Erreur API SHAP mappées {response.status_code}: {response.text}")
+            # En cas d'erreur, générer un mapping local
+            return _generate_mapped_feature_importance(client_id)
+        
+    except Exception as e:
+        logger.exception(f"Exception lors de la récupération des valeurs SHAP mappées pour client {client_id}")
+        # En cas d'exception, générer un mapping local
+        return _generate_mapped_feature_importance(client_id)
+
+def _generate_mapped_feature_importance(client_id):
+    """
+    Génère localement un mapping entre les valeurs SHAP et les valeurs réelles du client
+    Utilisé comme fallback si l'API ne dispose pas de l'endpoint /shap_values_mapped/
+    """
+    logger.info(f"Génération locale du mapping des valeurs SHAP pour le client {client_id}")
+    
+    # Récupérer les valeurs SHAP
+    shap_values = get_feature_importance(client_id)
+    if not shap_values:
+        return None
+    
+    # Récupérer les détails du client pour obtenir les valeurs réelles
+    client_details = get_client_details(client_id)
+    if not client_details or 'features' not in client_details:
+        return None
+    
+    # Récupérer les features du client
+    client_features = client_details['features']
+    
+    # Créer le mapping entre valeurs SHAP et valeurs réelles
+    mapped_values = []
+    
+    for feature_name, shap_value in shap_values.items():
+        # Récupérer la valeur réelle de la feature pour ce client
+        real_value = client_features.get(feature_name, "N/A")
+        
+        # Déterminer la direction de l'impact
+        impact_direction = "positif" if shap_value > 0 else "négatif"
+        
+        # Format de présentation des valeurs réelles selon le type de feature
+        display_value = real_value
+        if feature_name == "DAYS_BIRTH":
+            display_value = f"{abs(int(real_value / 365))} ans" if real_value != "N/A" else "N/A"
+        elif feature_name == "DAYS_EMPLOYED":
+            if real_value == 365243:
+                display_value = "Sans emploi"
+            elif real_value != "N/A":
+                display_value = f"{abs(int(real_value / 365))} ans" 
+                
+        # Créer l'objet de mapping
+        mapped_feature = {
+            "feature_name": feature_name,
+            "display_name": FEATURE_DESCRIPTIONS.get(feature_name, feature_name),
+            "shap_value": shap_value,
+            "real_value": real_value,
+            "display_value": display_value,
+            "impact_direction": impact_direction,
+            "impact_value": abs(shap_value)  # Valeur absolue pour trier
+        }
+        
+        mapped_values.append(mapped_feature)
+    
+    # Trier par importance (valeur absolue de SHAP)
+    mapped_values.sort(key=lambda x: x["impact_value"], reverse=True)
+    
+    return mapped_values
 
 def _get_feature_importance_fallback(client_id):
     """
