@@ -396,9 +396,17 @@ with tab2:
         </div>
         """, unsafe_allow_html=True)
         
-        # Table simplifiée des facteurs principaux
-        simple_explanations = []
+        # Ajout de la note explicative avant le tableau
+        st.markdown("""
+        <div style="margin-bottom: 1rem;">
+            <strong>Note :</strong> Les valeurs dans le graphique ci-dessus représentent l'<em>impact</em> de chaque facteur sur la décision.
+            Le tableau ci-dessous montre à la fois la <em>valeur réelle</em> de chaque facteur pour ce client et son impact sur la décision.
+        </div>
+        """, unsafe_allow_html=True)
         
+        # Table simplifiée des facteurs principaux - Version corrigée avec distinction claire
+        simple_explanations = []
+
         for feature, value in top_features:
             if feature == "EXT_SOURCE_1":
                 display_name = "Score normalisé - Source externe 1"
@@ -409,26 +417,31 @@ with tab2:
             else:
                 display_name = FEATURE_DESCRIPTIONS.get(feature, feature)
                 
-            impact = "Favorable" if value < 0 else "Défavorable"
+            # Valeur d'impact (SHAP) arrondie pour affichage
+            impact_value = abs(round(value, 2))
+            impact_direction = "Favorable" if value < 0 else "Défavorable"
             
-            # Obtenir la valeur réelle de la feature de manière simplifiée
-            feature_value = None
-            if feature in details.get('features', {}):
-                feature_value = round(details['features'][feature], 2)
+            # Valeur réelle de la caractéristique
+            real_value = "N/A"
+            if feature in details.get('features', {}) and details['features'][feature] is not None:
+                if isinstance(details['features'][feature], (int, float)):
+                    real_value = round(details['features'][feature], 2)
+                else:
+                    real_value = details['features'][feature]
             
             simple_explanations.append({
                 "Facteur": display_name,
-                "Valeur": feature_value if feature_value is not None else "N/A",
-                "Impact": impact
+                "Valeur réelle": real_value,
+                "Impact": f"{impact_direction} ({impact_value})"
             })
-        
-        # Afficher le tableau simplifié
+
+        # Afficher le tableau avec des noms de colonnes plus clairs
         st.dataframe(
             pd.DataFrame(simple_explanations),
             column_config={
                 "Facteur": st.column_config.TextColumn("Facteur"),
-                "Valeur": st.column_config.TextColumn("Valeur"),
-                "Impact": st.column_config.TextColumn("Impact")
+                "Valeur réelle": st.column_config.TextColumn("Valeur du client"),
+                "Impact": st.column_config.TextColumn("Impact sur la décision")
             },
             hide_index=True,
             use_container_width=True
