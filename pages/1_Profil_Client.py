@@ -82,24 +82,26 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Fonction pour afficher la barre de navigation commune avec attributs ARIA
-def display_navigation():
-    st.markdown(
-        """
-        <nav aria-label="Navigation principale" role="navigation">
-            <div style="margin-bottom: 1rem;">
-                <a href="/" class="nav-button" role="button" aria-label="Accueil">Accueil</a>
-                <a href="/Profil_Client" class="nav-button active" role="button" aria-current="page" aria-label="Page actuelle: Profil Client">Profil Client</a>
-                <a href="/Comparaison" class="nav-button" role="button" aria-label="Comparaison">Comparaison</a>
-                <a href="/Simulation" class="nav-button" role="button" aria-label="Simulation">Simulation</a>
-            </div>
-        </nav>
-        """,
-        unsafe_allow_html=True
-    )
+# Titre et présentation
+st.title("Dashboard Credit Scoring")
 
-# Affichage de la barre de navigation
-display_navigation()
+# Alternative textuelle pour l'icône - Critère 1.1.1
+st.markdown('<span class="visually-hidden" aria-hidden="false">Icône représentant une carte de crédit pour le dashboard de scoring</span>', unsafe_allow_html=True)
+
+# Barre de navigation principale
+tabs = ["Accueil", "Profil Client", "Comparaison", "Simulation"]
+selected_tab = st.tabs(tabs)
+
+# Déterminer l'index de l'onglet actif
+active_tab_index = 1  # Pour la page Profil Client
+
+# Gestion de la navigation
+if selected_tab[0].button("Accueil", key="nav_home", use_container_width=True):
+    st.switch_page("Home.py")
+elif selected_tab[2].button("Comparaison", key="nav_compare", use_container_width=True):
+    st.switch_page("pages/2_Comparaison.py")
+elif selected_tab[3].button("Simulation", key="nav_simulation", use_container_width=True):
+    st.switch_page("pages/3_Simulation.py")
 
 # Vérification de l'ID client dans la session
 if "client_id" not in st.session_state:
@@ -597,6 +599,25 @@ with col_notes2:
                      help="Retourner à la page d'accueil",
                      use_container_width=True):
             st.switch_page("Home.py")
+
+# Navigation vers les pages détaillées avec attributs d'accessibilité
+st.markdown('<h3 class="section-header">Outils d\'analyse pour le chargé de relation</h3>', unsafe_allow_html=True)
+col_nav1, col_nav2, col_nav3 = st.columns(3)
+
+with col_nav1:
+    # Bouton avec icône ET texte (1.4.1)
+    if st.button("📋 Profil détaillé et facteurs décisifs", key="btn_profile", use_container_width=True):
+        st.switch_page("pages/1_Profil_Client.py")
+        
+with col_nav2:
+    # Bouton avec icône ET texte (1.4.1)
+    if st.button("📊 Comparaison avec clients similaires", key="btn_compare", use_container_width=True):
+        st.switch_page("pages/2_Comparaison.py")
+        
+with col_nav3:
+    # Bouton avec icône ET texte (1.4.1)
+    if st.button("🔄 Simulation de modifications", key="btn_simulate", use_container_width=True):
+        st.switch_page("pages/3_Simulation.py")
 
 # Footer avec informations de version
 st.markdown("""
