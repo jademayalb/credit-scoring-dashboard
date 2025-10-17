@@ -61,24 +61,6 @@ st.markdown("""
     h2 { font-size: 1.75rem !important; }
     h3 { font-size: 1.5rem !important; }
     
-    .nav-button {
-        display: inline-block;
-        padding: 0.5rem 1rem !important;
-        margin-right: 0.75rem !important;
-        border-radius: 0.25rem !important;
-        text-decoration: none !important;
-        font-weight: 500 !important;
-        background-color: #f0f0f0 !important;
-        color: #000000 !important;
-        border: 1px solid #777777 !important;
-    }
-    
-    .nav-button.active {
-        background-color: #3366ff !important;
-        color: #ffffff !important;
-        font-weight: 700 !important;
-    }
-    
     /* Style pour la jauge de score */
     .score-gauge {
         padding: 0.5rem;
@@ -92,25 +74,6 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-
-# Fonction pour afficher la barre de navigation commune
-def display_navigation():
-    st.markdown(
-        """
-        <nav aria-label="Navigation principale" role="navigation">
-            <div style="margin-bottom: 1rem;">
-                <a href="/" class="nav-button" role="button" aria-label="Accueil">Accueil</a>
-                <a href="/Profil_Client" class="nav-button" role="button" aria-label="Profil Client">Profil Client</a>
-                <a href="/Comparaison" class="nav-button active" role="button" aria-current="page" aria-label="Page actuelle: Comparaison">Comparaison</a>
-                <a href="/Simulation" class="nav-button" role="button" aria-label="Simulation">Simulation</a>
-            </div>
-        </nav>
-        """,
-        unsafe_allow_html=True
-    )
-
-# Affichage de la barre de navigation
-display_navigation()
 
 # Titre de la page
 st.title("Comparaison de profils clients")
@@ -276,8 +239,8 @@ st.dataframe(
 # Visualisation comparative
 st.subheader("Analyse comparative des caractéristiques")
 
-# Liste des features SHAP les plus importantes par défaut
-default_features = ["EXT_SOURCE_3", "EXT_SOURCE_2", "EXT_SOURCE_1", "AMT_GOODS_PRICE", "AMT_CREDIT"]
+# Liste des features SHAP les plus importantes par défaut - MODIFIÉE POUR NE GARDER QUE LES 3 SCORES EXTERNES
+default_features = ["EXT_SOURCE_3", "EXT_SOURCE_2", "EXT_SOURCE_1"]
 
 # Sélection des caractéristiques à visualiser
 available_features = list(client_data[list(client_data.keys())[0]]["details"]["features"].keys())
@@ -370,7 +333,7 @@ else:
             else:
                 st.markdown(f"**{feature}**: Pas de description disponible")
 
-# NOUVEAU GRAPHIQUE: Comparaison des probabilités de défaut avec une jauge visuelle
+# NOUVEAU GRAPHIQUE: Comparaison des probabilités de défaut avec une jauge visuelle - AMÉLIORÉ POUR L'ACCESSIBILITÉ
 st.subheader("Comparaison des risques de défaut")
 
 # Récupérer le seuil pour tous les clients (ils devraient avoir le même)
@@ -385,15 +348,15 @@ sorted_clients = sorted(
     key=lambda x: x[1]
 )
 
-# Créer un graphique de type jauge/échelle
+# Créer un graphique de type jauge/échelle avec une meilleure accessibilité
 fig = go.Figure()
 
-# Définir les zones de risque
+# Définir les zones de risque avec couleurs à fort contraste
 fig.add_shape(
     type="rect",
     x0=0, x1=1, y0=0, y1=0.2,
     fillcolor=COLORBLIND_FRIENDLY_PALETTE['accepted'],
-    opacity=0.3,
+    opacity=0.4,
     line=dict(width=0),
     layer="below"
 )
@@ -401,7 +364,7 @@ fig.add_shape(
     type="rect",
     x0=0, x1=1, y0=0.2, y1=0.4,
     fillcolor=COLORBLIND_FRIENDLY_PALETTE['accepted'],
-    opacity=0.5,
+    opacity=0.6,
     line=dict(width=0),
     layer="below"
 )
@@ -409,7 +372,7 @@ fig.add_shape(
     type="rect",
     x0=0, x1=1, y0=0.4, y1=threshold,
     fillcolor=COLORBLIND_FRIENDLY_PALETTE['accepted'],
-    opacity=0.7,
+    opacity=0.8,
     line=dict(width=0),
     layer="below"
 )
@@ -417,7 +380,7 @@ fig.add_shape(
     type="rect",
     x0=0, x1=1, y0=threshold, y1=0.7,
     fillcolor=COLORBLIND_FRIENDLY_PALETTE['refused'],
-    opacity=0.5,
+    opacity=0.6,
     line=dict(width=0),
     layer="below"
 )
@@ -425,33 +388,40 @@ fig.add_shape(
     type="rect",
     x0=0, x1=1, y0=0.7, y1=1,
     fillcolor=COLORBLIND_FRIENDLY_PALETTE['refused'],
-    opacity=0.7,
+    opacity=0.8,
     line=dict(width=0),
     layer="below"
 )
 
-# Ajouter une ligne pour le seuil
+# Ajouter une ligne pour le seuil plus visible
 fig.add_shape(
     type="line",
     x0=0, x1=1, y0=threshold, y1=threshold,
     line=dict(
         color="black",
-        width=2,
+        width=3,
         dash="dash",
     )
 )
 
-# Ajouter une annotation pour le seuil
+# Ajouter une annotation pour le seuil - PLUS GRAND ET PLUS VISIBLE
 fig.add_annotation(
     x=1.02,
     y=threshold,
-    text=f"Seuil: {threshold:.2f}",
+    text=f"SEUIL: {threshold:.2f}",
     showarrow=False,
     xanchor="left",
     font=dict(
-        size=14,
-        color="black"
-    )
+        size=18,
+        color="black",
+        family="Arial",
+        weight="bold"
+    ),
+    bgcolor="rgba(255, 255, 255, 0.8)",
+    bordercolor="black",
+    borderwidth=1,
+    borderpad=4,
+    align="left"
 )
 
 # Ajouter les marqueurs de client
@@ -459,85 +429,132 @@ for i, (client_id, probability) in enumerate(sorted_clients):
     status = "ACCEPTÉ" if probability < threshold else "REFUSÉ"
     color = COLORBLIND_FRIENDLY_PALETTE['accepted'] if status == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE['refused']
     
-    # Ajouter un marqueur pour chaque client
+    # Ajouter un marqueur pour chaque client avec étiquette plus visible
     fig.add_trace(go.Scatter(
         x=[0.5],
         y=[probability],
         mode="markers+text",
         marker=dict(
             symbol="circle",
-            size=20,
+            size=25,
             color=color,
             line=dict(
-                width=2,
+                width=3,
                 color="white"
             )
         ),
         text=[f"#{client_id}"],
         textposition="middle right",
         textfont=dict(
-            size=16,
-            color="black"
+            size=18,
+            color="black",
+            family="Arial",
+            weight="bold"
         ),
         name=f"Client #{client_id}",
-        hovertemplate=f"Client #{client_id}<br>Probabilité: {probability:.1%}<br>Statut: {status}<extra></extra>"
+        hovertemplate=f"Client #{client_id}<br>Probabilité: {probability:.1%}<br>Statut: {status}<extra></extra>",
+        showlegend=False  # Suppression de la légende comme demandé
     ))
+    
+    # Ajouter la probabilité près du marqueur pour plus de visibilité
+    fig.add_annotation(
+        x=0.65,
+        y=probability,
+        text=f"{probability:.1%}",
+        showarrow=False,
+        font=dict(
+            size=16,
+            color="black",
+            family="Arial",
+            weight="bold"
+        ),
+        bgcolor="rgba(255, 255, 255, 0.8)",
+        bordercolor="black",
+        borderwidth=1,
+        borderpad=3
+    )
 
 # Configurer la mise en page
 fig.update_layout(
-    title="Échelle de risque de défaut par client",
-    height=400,
+    title={
+        'text': "Échelle de risque de défaut par client",
+        'font': {'size': 24, 'family': 'Arial', 'color': 'black'}
+    },
+    height=500,  # Augmenter la hauteur pour plus de lisibilité
     plot_bgcolor='rgba(0,0,0,0)',
-    margin=dict(l=20, r=120, t=50, b=50),
+    margin=dict(l=20, r=150, t=70, b=50),  # Augmenter la marge droite pour les annotations
     yaxis=dict(
-        title="Probabilité de défaut",
+        title={
+            'text': "Probabilité de défaut",
+            'font': {'size': 18, 'family': 'Arial', 'color': 'black'}
+        },
         range=[-0.05, 1.05],
         tickformat='.0%',
         tickvals=[0, 0.2, 0.4, threshold, 0.7, 1],
-        ticktext=['0%', '20%', '40%', f'{threshold:.0%}', '70%', '100%']
+        ticktext=['0%', '20%', '40%', f'{threshold:.0%}', '70%', '100%'],
+        tickfont={'size': 16, 'family': 'Arial', 'color': 'black'}
     ),
     xaxis=dict(
         visible=False,
         range=[-0.1, 1.1]
     ),
-    showlegend=True,
-    legend=dict(
-        orientation="h",
-        yanchor="bottom",
-        y=1.02,
-        xanchor="center",
-        x=0.5
-    ),
+    showlegend=False,  # Suppression complète de la légende
     annotations=[
+        # Annotations pour les zones de risque avec meilleur contraste
         dict(
             x=0.05, y=0.1,
-            text="Risque très faible",
+            text="RISQUE TRÈS FAIBLE",
             showarrow=False,
-            font=dict(size=12)
+            font=dict(size=16, color='black', family='Arial', weight='bold'),
+            bgcolor='rgba(255, 255, 255, 0.8)',
+            bordercolor='black',
+            borderwidth=1,
+            borderpad=3,
+            align='left'
         ),
         dict(
             x=0.05, y=0.3,
-            text="Risque faible",
+            text="RISQUE FAIBLE",
             showarrow=False,
-            font=dict(size=12)
+            font=dict(size=16, color='black', family='Arial', weight='bold'),
+            bgcolor='rgba(255, 255, 255, 0.8)',
+            bordercolor='black',
+            borderwidth=1,
+            borderpad=3,
+            align='left'
         ),
         dict(
             x=0.05, y=threshold - 0.1,
-            text="Risque modéré",
+            text="RISQUE MODÉRÉ",
             showarrow=False,
-            font=dict(size=12)
+            font=dict(size=16, color='black', family='Arial', weight='bold'),
+            bgcolor='rgba(255, 255, 255, 0.8)',
+            bordercolor='black',
+            borderwidth=1,
+            borderpad=3,
+            align='left'
         ),
         dict(
             x=0.05, y=threshold + 0.1,
-            text="Risque élevé",
+            text="RISQUE ÉLEVÉ",
             showarrow=False,
-            font=dict(size=12)
+            font=dict(size=16, color='black', family='Arial', weight='bold'),
+            bgcolor='rgba(255, 255, 255, 0.8)',
+            bordercolor='black',
+            borderwidth=1,
+            borderpad=3,
+            align='left'
         ),
         dict(
             x=0.05, y=0.85,
-            text="Risque très élevé",
+            text="RISQUE TRÈS ÉLEVÉ",
             showarrow=False,
-            font=dict(size=12)
+            font=dict(size=16, color='black', family='Arial', weight='bold'),
+            bgcolor='rgba(255, 255, 255, 0.8)',
+            bordercolor='black',
+            borderwidth=1,
+            borderpad=3,
+            align='left'
         )
     ]
 )
@@ -565,7 +582,7 @@ with st.expander("En savoir plus sur l'échelle de risque"):
     4. **Risque élevé** (52-70%): Clients présentant un risque significatif de défaut, généralement refusés.
     5. **Risque très élevé** (70-100%): Clients présentant un risque majeur de défaut, systématiquement refusés.
     
-    Le seuil de décision (actuellement à {threshold:.0%}) est déterminé par le modèle pour optimiser l'équilibre entre l'acceptation de bons clients et le refus de clients à risque.
+    Le seuil de décision (actuellement à 0.52 est déterminé par le modèle pour optimiser l'équilibre entre l'acceptation de bons clients et le refus de clients à risque.
     """)
 
 # Footer
