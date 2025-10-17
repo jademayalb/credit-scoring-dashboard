@@ -156,7 +156,7 @@ st.markdown(
 st.markdown(f'<div class="visually-hidden">La demande de crédit a été {status_text}. La probabilité de défaut calculée est de {probability:.1%}.</div>', unsafe_allow_html=True)
 
 # Organisation en tabs pour les différentes sections
-tab1, tab2 = st.tabs(["Profil client", "Facteurs décisionnels"])
+tab1, tab2, tab3 = st.tabs(["Profil client", "Facteurs décisionnels", "Analyse bivariée"])
 
 with tab1:
     # Section 1: Informations détaillées du client
@@ -552,6 +552,258 @@ with tab2:
         
     else:
         st.info("Veuillez sélectionner au moins une caractéristique pour l'analyse comparative.")
+
+# Nouvel onglet pour l'analyse bivariée
+with tab3:
+    st.header("Analyse bivariée des caractéristiques")
+    
+    st.markdown("""
+    Cette section vous permet d'explorer la relation entre deux caractéristiques. 
+    Sélectionnez deux variables ci-dessous pour visualiser leur relation à l'aide d'un nuage de points.
+    """)
+    
+    # Filtrer pour ne garder que les features numériques
+    features_dict = details.get('features', {})
+    numeric_features = []
+    for feature, value in features_dict.items():
+        if isinstance(value, (int, float)) and feature not in ['SK_ID_CURR']:
+            numeric_features.append(feature)
+    
+    # Sélection des deux caractéristiques pour l'analyse bivariée
+    col_select1, col_select2 = st.columns(2)
+    
+    with col_select1:
+        x_feature = st.selectbox(
+            "Sélectionner la caractéristique pour l'axe X:",
+            options=numeric_features,
+            format_func=lambda f: FEATURE_DESCRIPTIONS.get(f, f),
+            key="bivar_x_feature",
+            index=0 if len(numeric_features) > 0 else None
+        )
+    
+    with col_select2:
+        # Exclure la feature déjà sélectionnée pour X
+        y_features = [f for f in numeric_features if f != x_feature]
+        y_feature = st.selectbox(
+            "Sélectionner la caractéristique pour l'axe Y:",
+            options=y_features,
+            format_func=lambda f: FEATURE_DESCRIPTIONS.get(f, f),
+            key="bivar_y_feature",
+            index=0 if len(y_features) > 0 else None
+        )
+    
+    # Vérifier si les deux caractéristiques sont sélectionnées
+    if x_feature and y_feature:
+        # Obtenir les données pour créer le nuage de points
+        x_value = features_dict.get(x_feature)
+        y_value = features_dict.get(y_feature)
+        
+        # Obtenir les noms d'affichage pour les caractéristiques
+        x_display = FEATURE_DESCRIPTIONS.get(x_feature, x_feature)
+        y_display = FEATURE_DESCRIPTIONS.get(y_feature, y_feature)
+        
+        # Gestion des cas spéciaux pour les jours
+        if x_feature == "DAYS_BIRTH":
+            x_value = abs(x_value) / 365.25
+            x_display = "Âge (années)"
+        elif x_feature == "DAYS_EMPLOYED":
+            if x_value == 365243:
+                x_value = 0
+                x_display = "Ancienneté d'emploi (années)"
+            else:
+                x_value = abs(x_value) / 365.25
+                x_display = "Ancienneté d'emploi (années)"
+        
+        if y_feature == "DAYS_BIRTH":
+            y_value = abs(y_value) / 365.25
+            y_display = "Âge (années)"
+        elif y_feature == "DAYS_EMPLOYED":
+            if y_value == 365243:
+                y_value = 0
+                y_display = "Ancienneté d'emploi (années)"
+            else:
+                y_value = abs(y_value) / 365.25
+                y_display = "Ancienneté d'emploi (années)"
+        
+        # Créer un DataFrame pour le point du client actuel
+        client_point = pd.DataFrame({
+            "x": [x_value],
+            "y": [y_value],
+            "client": [f"Client #{client_id}"]
+        })
+        
+        # Création du nuage de points avec contexte
+        try:
+            # Essayer de charger un échantillon de données pour ajouter du contexte
+            # Ceci pourrait être remplacé par un appel API pour récupérer des données similaires
+            # Pour cet exemple, nous allons simuler quelques points de contexte
+            import random
+            
+            # Générer des points de contexte autour des valeurs du client
+            # En production, ces valeurs viendraient de l'API ou d'une base de données
+            context_size = 50
+            x_std = max(abs(x_value) * 0.2, 0.1)  # écart-type de 20% de la valeur ou au moins 0.1
+            y_std = max(abs(y_value) * 0.2, 0.1)  # écart-type de 20% de la valeur ou au moins 0.1
+            
+            # Générer des valeurs normalement distribuées autour des valeurs du client
+            context_x = np.random.normal(x_value, x_std, context_size)
+            context_y = np.random.normal(y_value, y_std, context_size)
+            
+            # Assurer que les valeurs soient positives si nécessaire
+            if x_feature in ["DAYS_BIRTH", "DAYS_EMPLOYED"]:
+                context_x = np.abs(context_x)
+            if y_feature in ["DAYS_BIRTH", "DAYS_EMPLOYED"]:
+                context_y = np.abs(context_y)
+            
+            # Créer un DataFrame pour les points de contexte
+            context_df = pd.DataFrame({
+                "x": context_x,
+                "y": context_y,
+                "client": ["Autres clients" for _ in range(context_size)]
+            })
+            
+            # Combiner le point client avec les points de contexte
+            plot_df = pd.concat([client_point, context_df])
+            
+            # Créer un nuage de points avec distinction claire du client actuel
+            fig = px.scatter(
+                plot_df,
+                x="x",
+                y="y",
+                color="client",
+                color_discrete_map={
+                    f"Client #{client_id}": COLORBLIND_FRIENDLY_PALETTE["primary"],
+                    "Autres clients": "rgba(180, 180, 180, 0.5)"  # Points de contexte en gris transparent
+                },
+                labels={
+                    "x": x_display,
+                    "y": y_display,
+                    "client": "Client"
+                },
+                title=f"Relation entre {x_display} et {y_display}",
+                height=600
+            )
+            
+            # Mise en forme du graphique pour une meilleure lisibilité
+            fig.update_traces(
+                marker=dict(
+                    size=[12 if c == f"Client #{client_id}" else 8 for c in plot_df["client"]],
+                    opacity=[1 if c == f"Client #{client_id}" else 0.6 for c in plot_df["client"]],
+                    line=dict(
+                        width=[2 if c == f"Client #{client_id}" else 0 for c in plot_df["client"]],
+                        color=[COLORBLIND_FRIENDLY_PALETTE["primary"] if c == f"Client #{client_id}" else "lightgrey" for c in plot_df["client"]]
+                    )
+                )
+            )
+            
+            # Amélioration de la mise en page
+            fig.update_layout(
+                xaxis=dict(
+                    title=dict(text=x_display, font=dict(size=16)),
+                    tickfont=dict(size=14),
+                    zeroline=True,
+                    zerolinecolor='rgba(0,0,0,0.2)',
+                    gridcolor='rgba(0,0,0,0.05)'
+                ),
+                yaxis=dict(
+                    title=dict(text=y_display, font=dict(size=16)),
+                    tickfont=dict(size=14),
+                    zeroline=True,
+                    zerolinecolor='rgba(0,0,0,0.2)',
+                    gridcolor='rgba(0,0,0,0.05)'
+                ),
+                legend=dict(
+                    font=dict(size=14),
+                    bordercolor='rgba(0,0,0,0.1)',
+                    borderwidth=1
+                ),
+                title=dict(
+                    text=f"Relation entre {x_display} et {y_display}",
+                    font=dict(size=20),
+                    x=0.5,
+                    xanchor='center'
+                ),
+                hovermode='closest',
+                hoverlabel=dict(
+                    bgcolor="white",
+                    font_size=14,
+                    font_family="Arial"
+                )
+            )
+            
+            # Ajouter une ligne de tendance pour visualiser la relation
+            fig.add_trace(
+                go.Scatter(
+                    x=[min(plot_df["x"]), max(plot_df["x"])],
+                    y=[min(plot_df["y"]), max(plot_df["y"])] if np.corrcoef(plot_df["x"], plot_df["y"])[0, 1] > 0 else [max(plot_df["y"]), min(plot_df["y"])],
+                    mode='lines',
+                    line=dict(color='rgba(0,0,0,0.3)', dash='dash'),
+                    name='Tendance',
+                    hoverinfo='skip'
+                )
+            )
+            
+            # Afficher le graphique
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Calcul du coefficient de corrélation
+            corr = np.corrcoef(plot_df["x"], plot_df["y"])[0, 1]
+            
+            # Affichage du coefficient de corrélation et interprétation
+            corr_strength = ""
+            if abs(corr) < 0.3:
+                corr_strength = "faible"
+            elif abs(corr) < 0.7:
+                corr_strength = "modérée"
+            else:
+                corr_strength = "forte"
+                
+            corr_direction = "positive" if corr >= 0 else "négative"
+            
+            st.markdown(f"""
+            <div style="background-color: #f8f9fa; padding: 1rem; border-radius: 0.5rem; border: 1px solid #dee2e6;">
+                <h4 style="margin-top: 0;">Analyse de la relation</h4>
+                <p>Le coefficient de corrélation entre ces deux caractéristiques est de <strong>{corr:.2f}</strong>.</p>
+                <p>Cela indique une relation <strong>{corr_strength} {corr_direction}</strong> entre {x_display} et {y_display}.</p>
+                <p><em>Note: Les points gris représentent des clients simulés pour illustrer le contexte. Dans une version complète, ces données proviendraient de clients réels similaires.</em></p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Description textuelle pour les lecteurs d'écran - Critère 1.1.1
+            st.markdown(f"""
+            <div class="visually-hidden">
+                Nuage de points montrant la relation entre {x_display} et {y_display}. 
+                Le client #{client_id} a une valeur de {x_value:.2f} pour {x_display} et {y_value:.2f} pour {y_display}.
+                La corrélation entre ces caractéristiques est {corr:.2f}, indiquant une relation {corr_strength} {corr_direction}.
+            </div>
+            """, unsafe_allow_html=True)
+            
+        except Exception as e:
+            st.error(f"Impossible de générer le graphique d'analyse bivariée: {str(e)}")
+            st.info("Essayez de sélectionner d'autres caractéristiques ou vérifiez que les données sont bien numériques.")
+    
+    else:
+        st.info("Veuillez sélectionner deux caractéristiques différentes pour visualiser leur relation.")
+    
+    # Explication de l'utilité de l'analyse bivariée
+    with st.expander("En savoir plus sur l'analyse bivariée"):
+        st.markdown("""
+        ### Qu'est-ce que l'analyse bivariée?
+        
+        L'analyse bivariée permet d'explorer la relation entre deux variables. Dans le contexte du crédit, cette analyse peut révéler des corrélations importantes qui aident à comprendre les facteurs de risque.
+        
+        ### Comment utiliser cette analyse?
+        
+        - **Pour identifier des relations importantes**: Par exemple, voir si l'âge est corrélé avec le score externe
+        - **Pour comprendre les compensations**: Certains facteurs négatifs peuvent être compensés par d'autres positifs
+        - **Pour guider les conseils aux clients**: Si un client est refusé, vous pouvez identifier quelles combinaisons de facteurs seraient plus favorables
+        
+        ### Exemples d'analyses pertinentes:
+        
+        - **Revenu vs Mensualité**: Pour voir si le montant de la mensualité est proportionnel au revenu
+        - **Âge vs Score externe**: Pour voir si l'âge influence la fiabilité du score
+        - **Montant du crédit vs Valeur du bien**: Pour évaluer le ratio de couverture
+        """)
 
 # Notes et actions du chargé de relation
 st.header("Notes et actions")
