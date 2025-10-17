@@ -156,7 +156,7 @@ st.markdown(
 st.markdown(f'<div class="visually-hidden">La demande de crédit a été {status_text}. La probabilité de défaut calculée est de {probability:.1%}.</div>', unsafe_allow_html=True)
 
 # Organisation en tabs pour les différentes sections
-tab1, tab2, tab3 = st.tabs(["Profil client", "Facteurs décisionnels", "Analyse bivariée"])
+tab1, tab2 = st.tabs(["Profil client", "Facteurs décisionnels"])
 
 with tab1:
     # Section 1: Informations détaillées du client
