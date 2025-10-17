@@ -65,7 +65,6 @@ FEATURE_DESCRIPTIONS = {
     "AMT_INCOME_TOTAL": "Revenu total du client",
     "AMT_CREDIT": "Montant du crédit",
     "AMT_ANNUITY": "Montant de l'annuité",
-    "DAYS_ID_PUBLISH": "Nombre de jours depuis la publication de la carte d'identité",
     "AMT_GOODS_PRICE": "Prix des biens financés",
     "CODE_GENDER": "Genre du client",
     "NAME_EDUCATION_TYPE": "Type d'éducation",
@@ -73,6 +72,14 @@ FEATURE_DESCRIPTIONS = {
     "CNT_CHILDREN": "Nombre d'enfants",
     "CNT_FAM_MEMBERS": "Nombre de membres dans la famille",
     "NAME_INCOME_TYPE": "Type de revenu",
+    "DAYS_ID_PUBLISH": "Nombre de jours depuis la publication de la carte d'identité",
+    "REGION_RATING_CLIENT": "Évaluation de la région du client",
+    "REGION_RATING_CLIENT_W_CITY": "Évaluation de la région du client avec ville",
+    "FLAG_OWN_CAR": "Possession d'une voiture",
+    "FLAG_OWN_REALTY": "Possession d'un bien immobilier",
+    "NAME_CONTRACT_TYPE": "Type de contrat",
+    "ORGANIZATION_TYPE": "Type d'organisation",
+    "OCCUPATION_TYPE": "Type d'occupation",
     "CREDIT_INCOME_PERCENT": "Pourcentage de crédit par rapport au revenu",
     "ANNUITY_INCOME_PERCENT": "Pourcentage de l'annuité par rapport au revenu",
     "CREDIT_TERM": "Terme du crédit (années)",
@@ -81,22 +88,49 @@ FEATURE_DESCRIPTIONS = {
 
 # Dictionnaire de mapping entre noms de features SHAP et les propriétés client
 FEATURE_MAPPING = {
+    # Features sources externes
     "EXT_SOURCE_1": {"section": "features", "key": "EXT_SOURCE_1"},
     "EXT_SOURCE_2": {"section": "features", "key": "EXT_SOURCE_2"},
     "EXT_SOURCE_3": {"section": "features", "key": "EXT_SOURCE_3"},
+    
+    # Features démographiques
     "DAYS_BIRTH": {"section": "personal_info", "key": "age", "transform": lambda x: abs(x) / 365.25},
     "DAYS_EMPLOYED": {"section": "personal_info", "key": "employment_years", "transform": lambda x: abs(x) / 365.25 if x != 365243 else 0},
+    "CODE_GENDER": {"section": "personal_info", "key": "gender"},
+    "NAME_EDUCATION_TYPE": {"section": "personal_info", "key": "education"},
+    "NAME_FAMILY_STATUS": {"section": "personal_info", "key": "family_status"},
+    "CNT_CHILDREN": {"section": "personal_info", "key": "children_count"},
+    "CNT_FAM_MEMBERS": {"section": "personal_info", "key": "family_size"},
+    "NAME_INCOME_TYPE": {"section": "personal_info", "key": "employment_type"},
+    
+    # Features financières
     "AMT_INCOME_TOTAL": {"section": "personal_info", "key": "income"},
     "AMT_CREDIT": {"section": "credit_info", "key": "amount"},
     "AMT_ANNUITY": {"section": "credit_info", "key": "annuity"},
     "AMT_GOODS_PRICE": {"section": "credit_info", "key": "goods_price"},
+    "NAME_CONTRACT_TYPE": {"section": "credit_info", "key": "name_goods_category"},
+    
+    # Indicateurs binaires
+    "FLAG_OWN_CAR": {"section": "features", "key": "FLAG_OWN_CAR"},
+    "FLAG_OWN_REALTY": {"section": "features", "key": "FLAG_OWN_REALTY"},
+    
+    # Features avec encodage one-hot (exemples)
     "CODE_GENDER_F": {"section": "personal_info", "key": "gender", "transform": lambda x: x == "F"},
     "CODE_GENDER_M": {"section": "personal_info", "key": "gender", "transform": lambda x: x == "M"},
     "NAME_INCOME_TYPE_Working": {"section": "personal_info", "key": "employment_type", "transform": lambda x: x == "Working"},
+    
+    # Features calculées
     "CREDIT_INCOME_PERCENT": {"computed": True, "formula": lambda client: client["credit_info"]["amount"] / client["personal_info"]["income"] if client["personal_info"]["income"] > 0 else 0},
     "ANNUITY_INCOME_PERCENT": {"computed": True, "formula": lambda client: client["credit_info"]["annuity"] / client["personal_info"]["income"] if client["personal_info"]["income"] > 0 else 0},
     "CREDIT_TERM": {"section": "credit_info", "key": "credit_term"},
-    "DAYS_EMPLOYED_PERCENT": {"computed": True, "formula": lambda client: client["personal_info"]["employment_years"] / client["personal_info"]["age"] if client["personal_info"]["age"] > 0 else 0}
+    "DAYS_EMPLOYED_PERCENT": {"computed": True, "formula": lambda client: client["personal_info"]["employment_years"] / client["personal_info"]["age"] if client["personal_info"]["age"] > 0 else 0},
+    
+    # Autres features qui pourraient être importantes
+    "REGION_RATING_CLIENT": {"section": "features", "key": "REGION_RATING_CLIENT"},
+    "REGION_RATING_CLIENT_W_CITY": {"section": "features", "key": "REGION_RATING_CLIENT_W_CITY"},
+    "DAYS_ID_PUBLISH": {"section": "features", "key": "DAYS_ID_PUBLISH"},
+    "OCCUPATION_TYPE": {"section": "features", "key": "OCCUPATION_TYPE"},
+    "ORGANIZATION_TYPE": {"section": "features", "key": "ORGANIZATION_TYPE"}
 }
 
 def fetch_github_data():
@@ -691,22 +725,6 @@ def get_available_clients():
 def get_client_details(client_id):
     """
     Renvoie les détails d'un client spécifique pour l'affichage dans le dashboard.
-    ---
-    parameters:
-      - name: client_id
-        in: path
-        type: integer
-        required: true
-        description: Identifiant unique du client
-    responses:
-      200:
-        description: Détails du client récupérés avec succès
-      400:
-        description: ID client invalide
-      404:
-        description: Client introuvable
-      500:
-        description: Erreur interne du serveur
     """
     try:
         # Validation du client_id
@@ -731,15 +749,16 @@ def get_client_details(client_id):
         
         # Organiser les données en catégories pour l'interface
         personal_info = {
-            "gender": "F" if client_data.get('CODE_GENDER') == "F" else "M",
+            "gender": client_data.get('CODE_GENDER', ''),
             "age": int(abs(client_data.get('DAYS_BIRTH', 0)) / 365.25) if 'DAYS_BIRTH' in client_data else None,
-            "education": client_data.get('NAME_EDUCATION_TYPE'),
-            "family_status": client_data.get('NAME_FAMILY_STATUS'),
+            "education": client_data.get('NAME_EDUCATION_TYPE', ''),
+            "family_status": client_data.get('NAME_FAMILY_STATUS', ''),
             "children_count": int(client_data.get('CNT_CHILDREN', 0)),
-            "family_size": int(client_data.get('CNT_FAM_MEMBERS', 1)),
+            "family_size": float(client_data.get('CNT_FAM_MEMBERS', 1)),
             "income": float(client_data.get('AMT_INCOME_TOTAL', 0)),
-            "employment_type": client_data.get('NAME_INCOME_TYPE'),
+            "employment_type": client_data.get('NAME_INCOME_TYPE', ''),
             "employment_years": int(abs(client_data.get('DAYS_EMPLOYED', 0)) / 365.25) if ('DAYS_EMPLOYED' in client_data and client_data.get('DAYS_EMPLOYED') != 365243) else 0,
+            "occupation": client_data.get('OCCUPATION_TYPE', '')
         }
         
         credit_info = {
@@ -762,11 +781,19 @@ def get_client_details(client_id):
         # Extraire les features brutes pour les visualisations
         features_raw = {}
         for key in client_data.keys():
+            # Inclure toutes les features importantes pour SHAP
             if key in ['EXT_SOURCE_1', 'EXT_SOURCE_2', 'EXT_SOURCE_3', 
                       'DAYS_BIRTH', 'DAYS_EMPLOYED', 'AMT_INCOME_TOTAL',
                       'AMT_CREDIT', 'AMT_ANNUITY', 'DAYS_ID_PUBLISH',
-                      'AMT_GOODS_PRICE', 'CODE_GENDER']:
-                features_raw[key] = float(client_data.get(key, 0))
+                      'AMT_GOODS_PRICE', 'CODE_GENDER', 'FLAG_OWN_CAR',
+                      'FLAG_OWN_REALTY', 'REGION_RATING_CLIENT',
+                      'REGION_RATING_CLIENT_W_CITY', 'DAYS_REGISTRATION',
+                      'YEARS_BEGINEXPLUATATION_AVG', 'YEARS_BUILD_AVG']:
+                # Convertir en float si possible, sinon garder la valeur telle quelle
+                try:
+                    features_raw[key] = float(client_data.get(key, 0))
+                except (ValueError, TypeError):
+                    features_raw[key] = client_data.get(key)
         
         response = {
             "client_id": int(client_id),
