@@ -456,40 +456,56 @@ for i, (client_id, probability) in enumerate(sorted_clients):
             color=color,
             line=dict(color='rgba(0,0,0,0.5)', width=1)
         ),
-        text=f"Client #{client_id}: {probability:.1%}",
-        textposition='outside',
-        textfont=dict(size=14, color='black'),
+        # Retirer le texte sur la barre pour éviter les chevauchements
         hovertemplate=f"Client #{client_id}<br>Probabilité: {probability:.1%}<br>Décision: {decision}<extra></extra>",
         name=f"Client #{client_id}",
         showlegend=False
     ))
     
-    # Ajouter une annotation avec l'ID client
+    # Ajouter une annotation avec l'ID client à gauche de la barre pour plus de clarté
     fig.add_annotation(
         x=-0.05,  # Légèrement à gauche de l'axe
         y=i,
         text=f"#{client_id}",
         showarrow=False,
         xanchor="right",
-        font=dict(size=14, color='black', family='Arial'),
+        font=dict(size=14, color='black', family='Arial', weight='bold'),
         bgcolor='white',
+        borderpad=2
+    )
+    
+    # Ajouter le pourcentage à droite de la barre (avec décalage pour éviter le trait vertical du seuil)
+    position_x = probability + 0.03 if abs(probability - threshold) > 0.05 else probability + 0.06
+    fig.add_annotation(
+        x=position_x,
+        y=i,
+        text=f"{probability:.1%}",
+        showarrow=False,
+        xanchor="left",
+        font=dict(size=14, color='black', family='Arial'),
+        bgcolor='rgba(255, 255, 255, 0.7)',  # Fond semi-transparent
+        bordercolor='rgba(0,0,0,0.3)',
+        borderwidth=1,
         borderpad=2
     )
 
 # Configurer la mise en page du graphique
 fig.update_layout(
+    # Titre au même style que le premier graphique
     title={
-        'text': "Échelle de risque de défaut par client",
-        'font': {'size': 24, 'family': 'Arial', 'color': 'black'}
+        'text': "Comparaison des risques de défaut par client",
+        'font': {'size': 18, 'family': 'Arial', 'color': 'black'},
+        'x': 0.5,
+        'xanchor': 'center'
     },
     height=max(400, 100 + 50 * len(sorted_clients)),  # Ajuster la hauteur en fonction du nombre de clients
     bargap=0.3,
     plot_bgcolor='rgba(0,0,0,0)',
-    margin=dict(l=60, r=30, t=80, b=100),
+    margin=dict(l=60, r=100, t=80, b=100),  # Augmenter la marge droite pour les annotations
     xaxis=dict(
         title="Probabilité de défaut",
-        titlefont=dict(size=18),
-        range=[-0.1, 1.05],
+        titlefont=dict(size=14),
+        range=[-0.1, 1.1],  # Élargir légèrement pour les annotations
         tickformat='.0%',
         tickvals=[0, 0.2, 0.4, threshold, 0.7, 1],
         ticktext=['0%', '20%', '40%', f'{threshold:.0%}', '70%', '100%'],
