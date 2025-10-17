@@ -559,7 +559,7 @@ with tab3:
     
     st.markdown("""
     Cette section vous permet d'explorer la relation entre deux caractéristiques. 
-    Sélectionnez deux variables ci-dessous pour visualiser leur relation à l'aide d'un nuage de points.
+    Sélectionnez deux variables ci-dessous pour visualiser leur relation.
     """)
     
     # Filtrer pour ne garder que les features numériques
@@ -625,75 +625,50 @@ with tab3:
                 y_value = abs(y_value) / 365.25
                 y_display = "Ancienneté d'emploi (années)"
         
-        # Créer un DataFrame pour le point du client actuel
+        # Créer un DataFrame pour le point du client
         client_point = pd.DataFrame({
             "x": [x_value],
-            "y": [y_value],
-            "client": [f"Client #{client_id}"]
+            "y": [y_value]
         })
         
-        # Création du nuage de points avec contexte
+        # Création du graphique d'analyse bivariée
         try:
-            # Essayer de charger un échantillon de données pour ajouter du contexte
-            # Ceci pourrait être remplacé par un appel API pour récupérer des données similaires
-            # Pour cet exemple, nous allons simuler quelques points de contexte
-            import random
-            
-            # Générer des points de contexte autour des valeurs du client
-            # En production, ces valeurs viendraient de l'API ou d'une base de données
-            context_size = 50
-            x_std = max(abs(x_value) * 0.2, 0.1)  # écart-type de 20% de la valeur ou au moins 0.1
-            y_std = max(abs(y_value) * 0.2, 0.1)  # écart-type de 20% de la valeur ou au moins 0.1
-            
-            # Générer des valeurs normalement distribuées autour des valeurs du client
-            context_x = np.random.normal(x_value, x_std, context_size)
-            context_y = np.random.normal(y_value, y_std, context_size)
-            
-            # Assurer que les valeurs soient positives si nécessaire
-            if x_feature in ["DAYS_BIRTH", "DAYS_EMPLOYED"]:
-                context_x = np.abs(context_x)
-            if y_feature in ["DAYS_BIRTH", "DAYS_EMPLOYED"]:
-                context_y = np.abs(context_y)
-            
-            # Créer un DataFrame pour les points de contexte
-            context_df = pd.DataFrame({
-                "x": context_x,
-                "y": context_y,
-                "client": ["Autres clients" for _ in range(context_size)]
-            })
-            
-            # Combiner le point client avec les points de contexte
-            plot_df = pd.concat([client_point, context_df])
-            
-            # Créer un nuage de points avec distinction claire du client actuel
+            # Créer un nuage de points simple pour l'analyse bivariée
             fig = px.scatter(
-                plot_df,
+                client_point,
                 x="x",
                 y="y",
-                color="client",
-                color_discrete_map={
-                    f"Client #{client_id}": COLORBLIND_FRIENDLY_PALETTE["primary"],
-                    "Autres clients": "rgba(180, 180, 180, 0.5)"  # Points de contexte en gris transparent
-                },
                 labels={
                     "x": x_display,
-                    "y": y_display,
-                    "client": "Client"
+                    "y": y_display
                 },
-                title=f"Relation entre {x_display} et {y_display}",
-                height=600
+                title=f"Relation entre {x_display} et {y_display}"
             )
             
-            # Mise en forme du graphique pour une meilleure lisibilité
+            # Personnaliser l'apparence du point
             fig.update_traces(
                 marker=dict(
-                    size=[12 if c == f"Client #{client_id}" else 8 for c in plot_df["client"]],
-                    opacity=[1 if c == f"Client #{client_id}" else 0.6 for c in plot_df["client"]],
-                    line=dict(
-                        width=[2 if c == f"Client #{client_id}" else 0 for c in plot_df["client"]],
-                        color=[COLORBLIND_FRIENDLY_PALETTE["primary"] if c == f"Client #{client_id}" else "lightgrey" for c in plot_df["client"]]
-                    )
-                )
+                    size=15,
+                    color=COLORBLIND_FRIENDLY_PALETTE["primary"],
+                    symbol='circle',
+                    line=dict(color='black', width=1)
+                ),
+                hovertemplate=f"<b>{x_display}</b>: %{{x:.2f}}<br><b>{y_display}</b>: %{{y:.2f}}<extra></extra>"
+            )
+            
+            # Ajouter une ligne de tendance pour illustrer la relation potentielle
+            # (bien que ce ne soit pas très pertinent avec un seul point, c'est illustratif)
+            
+            # Créer des points pour la ligne de tendance autour du point central
+            x_range = [x_value * 0.7, x_value * 1.3] if x_value != 0 else [-1, 1]
+            y_range = [y_value * 0.7, y_value * 1.3] if y_value != 0 else [-1, 1]
+            
+            # Ajouter la ligne de tendance
+            fig.add_shape(
+                type="line",
+                x0=x_range[0], y0=y_range[0],
+                x1=x_range[1], y1=y_range[1],
+                line=dict(color="rgba(0,0,0,0.3)", dash="dash", width=1)
             )
             
             # Amélioration de la mise en page
@@ -712,11 +687,6 @@ with tab3:
                     zerolinecolor='rgba(0,0,0,0.2)',
                     gridcolor='rgba(0,0,0,0.05)'
                 ),
-                legend=dict(
-                    font=dict(size=14),
-                    bordercolor='rgba(0,0,0,0.1)',
-                    borderwidth=1
-                ),
                 title=dict(
                     text=f"Relation entre {x_display} et {y_display}",
                     font=dict(size=20),
@@ -728,53 +698,31 @@ with tab3:
                     bgcolor="white",
                     font_size=14,
                     font_family="Arial"
-                )
-            )
-            
-            # Ajouter une ligne de tendance pour visualiser la relation
-            fig.add_trace(
-                go.Scatter(
-                    x=[min(plot_df["x"]), max(plot_df["x"])],
-                    y=[min(plot_df["y"]), max(plot_df["y"])] if np.corrcoef(plot_df["x"], plot_df["y"])[0, 1] > 0 else [max(plot_df["y"]), min(plot_df["y"])],
-                    mode='lines',
-                    line=dict(color='rgba(0,0,0,0.3)', dash='dash'),
-                    name='Tendance',
-                    hoverinfo='skip'
-                )
+                ),
+                height=500
             )
             
             # Afficher le graphique
             st.plotly_chart(fig, use_container_width=True)
             
-            # Calcul du coefficient de corrélation
-            corr = np.corrcoef(plot_df["x"], plot_df["y"])[0, 1]
-            
-            # Affichage du coefficient de corrélation et interprétation
-            corr_strength = ""
-            if abs(corr) < 0.3:
-                corr_strength = "faible"
-            elif abs(corr) < 0.7:
-                corr_strength = "modérée"
-            else:
-                corr_strength = "forte"
-                
-            corr_direction = "positive" if corr >= 0 else "négative"
-            
+            # Analyse de la relation
             st.markdown(f"""
             <div style="background-color: #f8f9fa; padding: 1rem; border-radius: 0.5rem; border: 1px solid #dee2e6;">
-                <h4 style="margin-top: 0;">Analyse de la relation</h4>
-                <p>Le coefficient de corrélation entre ces deux caractéristiques est de <strong>{corr:.2f}</strong>.</p>
-                <p>Cela indique une relation <strong>{corr_strength} {corr_direction}</strong> entre {x_display} et {y_display}.</p>
-                <p><em>Note: Les points gris représentent des clients simulés pour illustrer le contexte. Dans une version complète, ces données proviendraient de clients réels similaires.</em></p>
+                <h4 style="margin-top: 0;">Analyse bivariée</h4>
+                <p>Cette visualisation montre la valeur du client pour les deux caractéristiques sélectionnées :</p>
+                <ul>
+                    <li><strong>{x_display}</strong> : {x_value:.2f}</li>
+                    <li><strong>{y_display}</strong> : {y_value:.2f}</li>
+                </ul>
+                <p>Pour une analyse plus détaillée, vous pouvez sélectionner différentes paires de caractéristiques.</p>
             </div>
             """, unsafe_allow_html=True)
             
             # Description textuelle pour les lecteurs d'écran - Critère 1.1.1
             st.markdown(f"""
             <div class="visually-hidden">
-                Nuage de points montrant la relation entre {x_display} et {y_display}. 
+                Graphique d'analyse bivariée montrant la relation entre {x_display} et {y_display}. 
                 Le client #{client_id} a une valeur de {x_value:.2f} pour {x_display} et {y_value:.2f} pour {y_display}.
-                La corrélation entre ces caractéristiques est {corr:.2f}, indiquant une relation {corr_strength} {corr_direction}.
             </div>
             """, unsafe_allow_html=True)
             
