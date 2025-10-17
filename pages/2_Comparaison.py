@@ -75,6 +75,27 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Titre et présentation
+st.title("Dashboard Credit Scoring")
+
+# Alternative textuelle pour l'icône - Critère 1.1.1
+st.markdown('<span class="visually-hidden" aria-hidden="false">Icône représentant une carte de crédit pour le dashboard de scoring</span>', unsafe_allow_html=True)
+
+# Barre de navigation principale
+tabs = ["Accueil", "Profil Client", "Comparaison", "Simulation"]
+selected_tab = st.tabs(tabs)
+
+# Déterminer l'index de l'onglet actif
+active_tab_index = 2  # Pour la page Comparaison
+
+# Gestion de la navigation
+if selected_tab[0].button("Accueil", key="nav_home", use_container_width=True):
+    st.switch_page("Home.py")
+elif selected_tab[1].button("Profil Client", key="nav_profile", use_container_width=True):
+    st.switch_page("pages/1_Profil_Client.py")
+elif selected_tab[3].button("Simulation", key="nav_simulation", use_container_width=True):
+    st.switch_page("pages/3_Simulation.py")
+
 # Titre de la page
 st.title("Comparaison de profils clients")
 st.markdown("""
@@ -474,13 +495,13 @@ for i, (client_id, probability) in enumerate(sorted_clients):
         borderpad=3
     )
 
-# Configurer la mise en page
+# Configurer la mise en page pour assurer que toutes les annotations sont visibles
 fig.update_layout(
     title={
         'text': "Échelle de risque de défaut par client",
         'font': {'size': 24, 'family': 'Arial', 'color': 'black'}
     },
-    height=500,  # Augmenter la hauteur pour plus de lisibilité
+    height=600,  # Augmenter la hauteur du graphique pour accommoder toutes les annotations
     plot_bgcolor='rgba(0,0,0,0)',
     margin=dict(l=20, r=150, t=70, b=50),  # Augmenter la marge droite pour les annotations
     yaxis=dict(
@@ -496,13 +517,13 @@ fig.update_layout(
     ),
     xaxis=dict(
         visible=False,
-        range=[-0.1, 1.1]
+        range=[-0.2, 1.3]  # Élargir la plage pour les annotations
     ),
-    showlegend=False,  # Suppression complète de la légende
+    showlegend=False,
     annotations=[
-        # Annotations pour les zones de risque avec meilleur contraste
+        # Annotations pour les zones de risque avec meilleur contraste et positionnement
         dict(
-            x=0.05, y=0.1,
+            x=-0.15, y=0.1,  # Positionnement ajusté
             text="RISQUE TRÈS FAIBLE",
             showarrow=False,
             font=dict(size=16, color='black', family='Arial', weight='bold'),
@@ -513,7 +534,7 @@ fig.update_layout(
             align='left'
         ),
         dict(
-            x=0.05, y=0.3,
+            x=-0.15, y=0.3,  # Positionnement ajusté
             text="RISQUE FAIBLE",
             showarrow=False,
             font=dict(size=16, color='black', family='Arial', weight='bold'),
@@ -524,7 +545,7 @@ fig.update_layout(
             align='left'
         ),
         dict(
-            x=0.05, y=threshold - 0.1,
+            x=-0.15, y=threshold - 0.1,  # Positionnement ajusté
             text="RISQUE MODÉRÉ",
             showarrow=False,
             font=dict(size=16, color='black', family='Arial', weight='bold'),
@@ -535,7 +556,7 @@ fig.update_layout(
             align='left'
         ),
         dict(
-            x=0.05, y=threshold + 0.1,
+            x=-0.15, y=threshold + 0.1,  # Positionnement ajusté
             text="RISQUE ÉLEVÉ",
             showarrow=False,
             font=dict(size=16, color='black', family='Arial', weight='bold'),
@@ -546,7 +567,7 @@ fig.update_layout(
             align='left'
         ),
         dict(
-            x=0.05, y=0.85,
+            x=-0.15, y=0.85,  # Positionnement ajusté
             text="RISQUE TRÈS ÉLEVÉ",
             showarrow=False,
             font=dict(size=16, color='black', family='Arial', weight='bold'),
@@ -582,8 +603,27 @@ with st.expander("En savoir plus sur l'échelle de risque"):
     4. **Risque élevé** (52-70%): Clients présentant un risque significatif de défaut, généralement refusés.
     5. **Risque très élevé** (70-100%): Clients présentant un risque majeur de défaut, systématiquement refusés.
     
-    Le seuil de décision (actuellement à 0.52 est déterminé par le modèle pour optimiser l'équilibre entre l'acceptation de bons clients et le refus de clients à risque.
+    Le seuil de décision est fixé à 52%. Ce seuil a été déterminé lors de l'entraînement du modèle pour optimiser l'équilibre entre l'acceptation de bons clients et le refus de clients à risque.
     """)
+
+# Navigation vers les pages détaillées avec attributs d'accessibilité
+st.markdown('<h3 class="section-header">Outils d\'analyse pour le chargé de relation</h3>', unsafe_allow_html=True)
+col_nav1, col_nav2, col_nav3 = st.columns(3)
+
+with col_nav1:
+    # Bouton avec icône ET texte (1.4.1)
+    if st.button("📋 Profil détaillé et facteurs décisifs", key="btn_profile", use_container_width=True):
+        st.switch_page("pages/1_Profil_Client.py")
+        
+with col_nav2:
+    # Bouton avec icône ET texte (1.4.1)
+    if st.button("📊 Comparaison avec clients similaires", key="btn_compare", use_container_width=True):
+        st.switch_page("pages/2_Comparaison.py")
+        
+with col_nav3:
+    # Bouton avec icône ET texte (1.4.1)
+    if st.button("🔄 Simulation de modifications", key="btn_simulate", use_container_width=True):
+        st.switch_page("pages/3_Simulation.py")
 
 # Footer
 st.markdown("""
