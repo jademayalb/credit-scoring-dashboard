@@ -5,10 +5,40 @@ from sklearn.preprocessing import LabelEncoder
 import pandas as pd
 import numpy as np
 import logging
-import shap  # Ajout de la bibliothèque SHAP
+import shap
+import requests
+from io import StringIO
+from flask_swagger_ui import get_swaggerui_blueprint
+import logging.handlers
+from datetime import datetime
+import json
+from werkzeug.exceptions import BadRequest
 
-# Configuration du logger
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+# Configuration du logger avec rotation des fichiers
+log_file = os.path.join(os.path.dirname(__file__), "logs", "api.log")
+os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
+# Configuration avancée du logging
+logger = logging.getLogger("api")
+logger.setLevel(logging.INFO)
+
+# Handler pour la console
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(console_format)
+
+# Handler pour les fichiers avec rotation (5 fichiers de 5 Mo max)
+file_handler = logging.handlers.RotatingFileHandler(
+    log_file, maxBytes=5*1024*1024, backupCount=5, encoding='utf-8'
+)
+file_handler.setLevel(logging.INFO)
+file_format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(file_format)
+
+# Ajout des handlers
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
 
 # Chemin absolu pour les artefacts
 BASE_DIR = os.path.dirname(__file__)
@@ -16,7 +46,106 @@ MODEL_PATH = os.path.join(BASE_DIR, "model_complet.pkl")
 SCALER_PATH = os.path.join(BASE_DIR, "scaler.pkl")
 IMPUTER_PATH = os.path.join(BASE_DIR, "imputer.pkl")
 FEATURES_PATH = os.path.join(BASE_DIR, "features.pkl")
-TEST_CSV_PATH = os.path.join(BASE_DIR, "application_test.csv")
+
+# URL vers le fichier CSV sur GitHub (version raw)
+GITHUB_CSV_URL = "https://raw.githubusercontent.com/jademayalb/credit-scoring-api/main/data/application_test.csv"
+
+# Cache pour les données
+_test_df_cache = None
+_last_fetch_time = 0
+_cache_ttl = 3600  # 1 heure en secondes
+
+# Dictionnaire des descriptions pour les features
+FEATURE_DESCRIPTIONS = {
+    "EXT_SOURCE_1": "Score normalisé - Source externe 1",
+    "EXT_SOURCE_2": "Score normalisé - Source externe 2",
+    "EXT_SOURCE_3": "Score normalisé - Source externe 3",
+    "DAYS_BIRTH": "Âge (en jours, négatif)",
+    "DAYS_EMPLOYED": "Nombre de jours d'emploi",
+    "AMT_INCOME_TOTAL": "Revenu total du client",
+    "AMT_CREDIT": "Montant du crédit",
+    "AMT_ANNUITY": "Montant de l'annuité",
+    "DAYS_ID_PUBLISH": "Nombre de jours depuis la publication de la carte d'identité",
+    "AMT_GOODS_PRICE": "Prix des biens financés",
+    "CODE_GENDER": "Genre du client",
+    "NAME_EDUCATION_TYPE": "Type d'éducation",
+    "NAME_FAMILY_STATUS": "Statut familial",
+    "CNT_CHILDREN": "Nombre d'enfants",
+    "CNT_FAM_MEMBERS": "Nombre de membres dans la famille",
+    "NAME_INCOME_TYPE": "Type de revenu",
+    "CREDIT_INCOME_PERCENT": "Pourcentage de crédit par rapport au revenu",
+    "ANNUITY_INCOME_PERCENT": "Pourcentage de l'annuité par rapport au revenu",
+    "CREDIT_TERM": "Terme du crédit (années)",
+    "DAYS_EMPLOYED_PERCENT": "Pourcentage des jours d'emploi par rapport à l'âge"
+}
+
+# Dictionnaire de mapping entre noms de features SHAP et les propriétés client
+FEATURE_MAPPING = {
+    "EXT_SOURCE_1": {"section": "features", "key": "EXT_SOURCE_1"},
+    "EXT_SOURCE_2": {"section": "features", "key": "EXT_SOURCE_2"},
+    "EXT_SOURCE_3": {"section": "features", "key": "EXT_SOURCE_3"},
+    "DAYS_BIRTH": {"section": "personal_info", "key": "age", "transform": lambda x: abs(x) / 365.25},
+    "DAYS_EMPLOYED": {"section": "personal_info", "key": "employment_years", "transform": lambda x: abs(x) / 365.25 if x != 365243 else 0},
+    "AMT_INCOME_TOTAL": {"section": "personal_info", "key": "income"},
+    "AMT_CREDIT": {"section": "credit_info", "key": "amount"},
+    "AMT_ANNUITY": {"section": "credit_info", "key": "annuity"},
+    "AMT_GOODS_PRICE": {"section": "credit_info", "key": "goods_price"},
+    "CODE_GENDER_F": {"section": "personal_info", "key": "gender", "transform": lambda x: x == "F"},
+    "CODE_GENDER_M": {"section": "personal_info", "key": "gender", "transform": lambda x: x == "M"},
+    "NAME_INCOME_TYPE_Working": {"section": "personal_info", "key": "employment_type", "transform": lambda x: x == "Working"},
+    "CREDIT_INCOME_PERCENT": {"computed": True, "formula": lambda client: client["credit_info"]["amount"] / client["personal_info"]["income"] if client["personal_info"]["income"] > 0 else 0},
+    "ANNUITY_INCOME_PERCENT": {"computed": True, "formula": lambda client: client["credit_info"]["annuity"] / client["personal_info"]["income"] if client["personal_info"]["income"] > 0 else 0},
+    "CREDIT_TERM": {"section": "credit_info", "key": "credit_term"},
+    "DAYS_EMPLOYED_PERCENT": {"computed": True, "formula": lambda client: client["personal_info"]["employment_years"] / client["personal_info"]["age"] if client["personal_info"]["age"] > 0 else 0}
+}
+
+def fetch_github_data():
+    """
+    Récupère les données depuis GitHub avec mise en cache
+    """
+    global _test_df_cache, _last_fetch_time
+    
+    current_time = int(pd.Timestamp.now().timestamp())
+    
+    # Utiliser le cache si disponible et pas trop vieux
+    if _test_df_cache is not None and (current_time - _last_fetch_time) < _cache_ttl:
+        logger.info("Utilisation des données en cache")
+        return _test_df_cache
+    
+    try:
+        logger.info(f"Téléchargement des données depuis GitHub: {GITHUB_CSV_URL}")
+        response = requests.get(GITHUB_CSV_URL, timeout=10)  # Ajout d'un timeout
+        response.raise_for_status()  # Vérifier les erreurs HTTP
+        
+        # Charger les données dans un DataFrame
+        data = StringIO(response.text)
+        df = pd.read_csv(data)
+        
+        # Mettre à jour le cache
+        _test_df_cache = df
+        _last_fetch_time = current_time
+        
+        logger.info(f"Données téléchargées avec succès: {len(df)} lignes")
+        return df
+    
+    except requests.exceptions.Timeout:
+        logger.error("Timeout lors du téléchargement des données depuis GitHub")
+        if _test_df_cache is not None:
+            logger.warning("Utilisation des données en cache (obsolètes)")
+            return _test_df_cache
+        raise
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Erreur lors du téléchargement des données depuis GitHub: {e}")
+        if _test_df_cache is not None:
+            logger.warning("Utilisation des données en cache (obsolètes)")
+            return _test_df_cache
+        raise
+    except Exception as e:
+        logger.error(f"Erreur inattendue lors du téléchargement des données: {e}")
+        if _test_df_cache is not None:
+            logger.warning("Utilisation des données en cache (obsolètes)")
+            return _test_df_cache
+        raise
 
 # Charger le modèle et les artefacts
 try:
@@ -28,32 +157,27 @@ try:
     threshold = model_data['optimal_threshold']
     model_name = model_data['model_name']
     poly_transformer = model_data.get('poly_transformer', None)
-    test_df = pd.read_csv(TEST_CSV_PATH)
     
-    # Initialiser l'explainer SHAP
-    if hasattr(model, 'predict_proba'):
-        try:
-            # Créer l'explainer avec un sous-ensemble des données
-            # Limiter la taille pour des raisons de performance
-            sample_size = min(1000, len(test_df))
-            sample_data = test_df.sample(sample_size, random_state=42)
-            
-            # Le préprocessing sera fait plus tard car nous avons besoin de la fonction preprocess définie
-            logging.info("SHAP sera initialisé après définition de la fonction preprocess.")
-            explainer = None  # Temporairement
-        except Exception as e:
-            logging.error(f"Erreur lors de la préparation pour SHAP: {e}")
-            explainer = None
-    else:
-        logging.warning("Le modèle ne supporte pas SHAP directement.")
-        explainer = None
-        
-    logging.info("Modèle et artefacts chargés avec succès.")
+    # Récupérer les données depuis GitHub
+    test_df = fetch_github_data()
+    
+    logger.info("Modèle et artefacts chargés avec succès.")
 except Exception as e:
-    logging.error(f"Erreur lors du chargement du modèle ou des artefacts : {e}")
+    logger.error(f"Erreur lors du chargement du modèle ou des artefacts : {e}")
     raise
 
 def preprocess(df, features_model, poly_transformer=None):
+    """
+    Prétraite les données pour la prédiction selon le pipeline défini lors de l'entraînement
+    
+    Args:
+        df (pandas.DataFrame): DataFrame contenant les données à prétraiter
+        features_model (list): Liste des features attendues par le modèle
+        poly_transformer (PolynomialFeatures, optional): Transformer pour les features polynomiales
+        
+    Returns:
+        pandas.DataFrame: DataFrame prétraité
+    """
     df = df.copy()
     le = LabelEncoder()
     for col in df.columns:
@@ -89,26 +213,83 @@ def preprocess(df, features_model, poly_transformer=None):
 # Maintenant que preprocess est défini, initialiser l'explainer
 try:
     if hasattr(model, 'predict_proba'):
-        sample_size = min(1000, len(test_df))
+        sample_size = min(100, len(test_df))  # Réduire la taille pour accélérer
         sample_data = test_df.sample(sample_size, random_state=42)
         sample_processed = preprocess(sample_data, features, poly_transformer)
         sample_imputed = imputer.transform(sample_processed)
         sample_scaled = scaler.transform(sample_imputed)
         
-        explainer = shap.TreeExplainer(model)
-        logging.info("Explainer SHAP initialisé avec succès.")
+        try:
+            # Utiliser TreeExplainer sans vérification d'additivité
+            explainer = shap.TreeExplainer(model, check_additivity=False)
+            logger.info("Explainer SHAP initialisé avec TreeExplainer.")
+        except Exception as e1:
+            logger.warning(f"TreeExplainer a échoué: {e1}")
+            explainer = None
+    else:
+        logger.warning("Le modèle ne supporte pas predict_proba, SHAP ne sera pas disponible.")
+        explainer = None
 except Exception as e:
-    logging.error(f"Erreur lors de l'initialisation de l'explainer SHAP: {e}")
+    logger.error(f"Erreur générale lors de l'initialisation de SHAP: {e}")
     explainer = None
 
 app = Flask(__name__)
 
+# Configuration Swagger
+SWAGGER_URL = '/api/docs'  # URL pour accéder à la documentation Swagger
+API_URL = '/static/swagger.json'  # URL vers le fichier de spécification de l'API
+
+# Créer le blueprint pour Swagger UI
+swaggerui_blueprint = get_swaggerui_blueprint(
+    SWAGGER_URL,
+    API_URL,
+    config={
+        'app_name': "Credit Scoring API"
+    }
+)
+
+# Enregistrer le blueprint
+app.register_blueprint(swaggerui_blueprint, url_prefix=SWAGGER_URL)
+
+@app.route('/static/swagger.json')
+def get_swagger():
+    """Sert le fichier de spécification swagger"""
+    with open('static/swagger.json', 'r') as f:
+        return jsonify(json.load(f))
+
 @app.route('/predict/<int:client_id>', methods=['GET'])
 def predict_client(client_id):
+    """
+    Prédit la probabilité de défaut pour un client spécifique.
+    ---
+    parameters:
+      - name: client_id
+        in: path
+        type: integer
+        required: true
+        description: Identifiant unique du client
+    responses:
+      200:
+        description: Prédiction réussie
+      404:
+        description: Client introuvable
+      500:
+        description: Erreur interne
+    """
     try:
+        # Validation du client_id
+        if client_id <= 0:
+            return jsonify({
+                "erreur": "ID client invalide",
+                "status": "INVALID_REQUEST"
+            }), 400
+            
+        # Récupérer les données depuis GitHub (avec cache)
+        test_df = fetch_github_data()
+        
         client_row = test_df[test_df['SK_ID_CURR'] == client_id]
         if client_row.empty:
-            logging.warning(f"Client ID {client_id} introuvable.")
+            logger.warning(f"Client ID {client_id} introuvable.")
             return jsonify({
                 "erreur": f"Client ID {client_id} introuvable",
                 "status": "NOT_FOUND"
@@ -120,7 +301,7 @@ def predict_client(client_id):
         proba = model.predict_proba(X_scaled)[0, 1]
         decision = "REFUSÉ" if proba >= threshold else "ACCEPTÉ"
 
-        logging.info(f"Prédiction réalisée pour client {client_id} : proba={proba:.4f}, décision={decision}")
+        logger.info(f"Prédiction réalisée pour client {client_id} : proba={proba:.4f}, décision={decision}")
 
         return jsonify({
             "client_id": int(client_id),
@@ -130,8 +311,15 @@ def predict_client(client_id):
             "model_name": model_name,
             "status": "OK"
         })
+    except BadRequest as e:
+        logger.error(f"Erreur de requête pour client {client_id} : {e}")
+        return jsonify({
+            "erreur": "Requête invalide",
+            "details": str(e),
+            "status": "INVALID_REQUEST"
+        }), 400
     except Exception as e:
-        logging.error(f"Erreur interne lors de la prédiction pour client {client_id} : {e}")
+        logger.error(f"Erreur interne lors de la prédiction pour client {client_id} : {e}")
         return jsonify({
             "erreur": "Erreur interne du serveur",
             "details": str(e),
@@ -144,20 +332,65 @@ def get_shap_values(client_id):
     """
     Calcule les valeurs SHAP locales pour un client spécifique.
     Ces valeurs expliquent la contribution de chaque feature à la prédiction.
+    ---
+    parameters:
+      - name: client_id
+        in: path
+        type: integer
+        required: true
+        description: Identifiant unique du client
+      - name: limit
+        in: query
+        type: integer
+        required: false
+        default: 20
+        description: Nombre maximum de features à retourner
+    responses:
+      200:
+        description: Valeurs SHAP calculées avec succès
+      400:
+        description: Requête invalide
+      404:
+        description: Client introuvable
+      503:
+        description: Explainer SHAP indisponible
     """
     try:
+        # Validation du client_id
+        if client_id <= 0:
+            return jsonify({
+                "erreur": "ID client invalide",
+                "status": "INVALID_REQUEST"
+            }), 400
+            
+        # Récupérer le paramètre limit
+        try:
+            limit = int(request.args.get('limit', 20))
+            if limit <= 0:
+                return jsonify({
+                    "erreur": "Le paramètre 'limit' doit être positif",
+                    "status": "INVALID_REQUEST"
+                }), 400
+        except ValueError:
+            return jsonify({
+                "erreur": "Le paramètre 'limit' doit être un entier",
+                "status": "INVALID_REQUEST"
+            }), 400
+        
         # Vérifier si l'explainer est disponible
         if explainer is None:
-            logging.warning(f"L'explainer SHAP n'est pas disponible pour le client {client_id}")
+            logger.warning(f"L'explainer SHAP n'est pas disponible pour le client {client_id}")
             return jsonify({
                 "erreur": "L'explainer SHAP n'est pas disponible",
+                "message": "Impossible de calculer les explications SHAP pour ce modèle",
                 "status": "ERROR"
-            }), 500
+            }), 503  # Service temporairement indisponible
         
         # Récupérer les données du client
+        test_df = fetch_github_data()
         client_row = test_df[test_df['SK_ID_CURR'] == client_id]
         if client_row.empty:
-            logging.warning(f"Client ID {client_id} introuvable pour SHAP.")
+            logger.warning(f"Client ID {client_id} introuvable pour SHAP.")
             return jsonify({
                 "erreur": f"Client ID {client_id} introuvable",
                 "status": "NOT_FOUND"
@@ -176,18 +409,17 @@ def get_shap_values(client_id):
             shap_values = shap_values[1]  # Classe positive (défaut de paiement)
         
         # Créer un dictionnaire des valeurs SHAP par feature
-        # Sélectionner les features les plus importantes pour la lisibilité
         shap_dict = {}
         
         # Mapper chaque valeur SHAP à sa feature
         for i, feature_name in enumerate(features):
             shap_dict[feature_name] = float(shap_values[0][i])
         
-        # Récupérer les 20 features avec les plus fortes valeurs SHAP (en valeur absolue)
-        shap_items = sorted(shap_dict.items(), key=lambda x: abs(x[1]), reverse=True)[:20]
+        # Récupérer les features avec les plus fortes valeurs SHAP (en valeur absolue)
+        shap_items = sorted(shap_dict.items(), key=lambda x: abs(x[1]), reverse=True)[:limit]
         top_shap_dict = {k: v for k, v in shap_items}
         
-        logging.info(f"Valeurs SHAP calculées pour client {client_id}")
+        logger.info(f"Valeurs SHAP calculées pour client {client_id}")
         
         return jsonify({
             "client_id": int(client_id),
@@ -195,10 +427,190 @@ def get_shap_values(client_id):
             "status": "OK"
         })
         
+    except BadRequest as e:
+        logger.error(f"Erreur de requête pour les valeurs SHAP du client {client_id}: {e}")
+        return jsonify({
+            "erreur": "Requête invalide",
+            "details": str(e),
+            "status": "INVALID_REQUEST"
+        }), 400
     except Exception as e:
-        logging.error(f"Erreur lors du calcul des valeurs SHAP pour client {client_id}: {e}")
+        logger.error(f"Erreur lors du calcul des valeurs SHAP pour client {client_id}: {e}")
         return jsonify({
             "erreur": "Erreur lors du calcul des valeurs SHAP",
+            "details": str(e),
+            "status": "ERROR"
+        }), 500
+
+# NOUVEL ENDPOINT POUR LES VALEURS SHAP AVEC MAPPING
+@app.route('/shap_values_mapped/<int:client_id>', methods=['GET'])
+def get_shap_values_mapped(client_id):
+    """
+    Calcule les valeurs SHAP locales pour un client spécifique et les mappe aux données client.
+    Cette version ajoute des informations supplémentaires pour faciliter l'utilisation par le frontend.
+    ---
+    parameters:
+      - name: client_id
+        in: path
+        type: integer
+        required: true
+        description: Identifiant unique du client
+      - name: limit
+        in: query
+        type: integer
+        required: false
+        default: 20
+        description: Nombre maximum de features à retourner
+    responses:
+      200:
+        description: Valeurs SHAP calculées et mappées avec succès
+      400:
+        description: Requête invalide
+      404:
+        description: Client introuvable
+      503:
+        description: Explainer SHAP indisponible
+    """
+    try:
+        # Validation du client_id
+        if client_id <= 0:
+            return jsonify({
+                "erreur": "ID client invalide",
+                "status": "INVALID_REQUEST"
+            }), 400
+            
+        # Récupérer le paramètre limit
+        try:
+            limit = int(request.args.get('limit', 20))
+            if limit <= 0:
+                return jsonify({
+                    "erreur": "Le paramètre 'limit' doit être positif",
+                    "status": "INVALID_REQUEST"
+                }), 400
+        except ValueError:
+            return jsonify({
+                "erreur": "Le paramètre 'limit' doit être un entier",
+                "status": "INVALID_REQUEST"
+            }), 400
+        
+        # Vérifier si l'explainer est disponible
+        if explainer is None:
+            logger.warning(f"L'explainer SHAP n'est pas disponible pour le client {client_id}")
+            return jsonify({
+                "erreur": "L'explainer SHAP n'est pas disponible",
+                "message": "Impossible de calculer les explications SHAP pour ce modèle",
+                "status": "ERROR"
+            }), 503  # Service temporairement indisponible
+        
+        # Récupérer les données du client
+        test_df = fetch_github_data()
+        client_row = test_df[test_df['SK_ID_CURR'] == client_id]
+        if client_row.empty:
+            logger.warning(f"Client ID {client_id} introuvable pour SHAP.")
+            return jsonify({
+                "erreur": f"Client ID {client_id} introuvable",
+                "status": "NOT_FOUND"
+            }), 404
+        
+        # Prétraiter les données comme pour la prédiction
+        client_processed = preprocess(client_row, features, poly_transformer)
+        X_imputed = imputer.transform(client_processed)
+        X_scaled = scaler.transform(X_imputed)
+        
+        # Calculer les valeurs SHAP
+        shap_values = explainer.shap_values(X_scaled)
+        
+        # Pour les modèles avec plusieurs classes, prendre la classe positive (défaut)
+        if isinstance(shap_values, list):
+            shap_values = shap_values[1]  # Classe positive (défaut de paiement)
+        
+        # Créer un dictionnaire des valeurs SHAP par feature
+        shap_dict = {}
+        
+        # Mapper chaque valeur SHAP à sa feature
+        for i, feature_name in enumerate(features):
+            shap_dict[feature_name] = float(shap_values[0][i])
+        
+        # Récupérer les features avec les plus fortes valeurs SHAP (en valeur absolue)
+        shap_items = sorted(shap_dict.items(), key=lambda x: abs(x[1]), reverse=True)[:limit]
+        
+        # Récupérer les détails du client pour mapper les valeurs SHAP
+        response_client = get_client_details(client_id)
+        if response_client.status_code != 200:
+            return response_client
+        
+        client_details = json.loads(response_client.data)
+        
+        # Préparer les résultats mappés
+        mapped_results = []
+        
+        for feature_name, shap_value in shap_items:
+            # Déterminer le nom d'affichage pour la feature
+            display_name = FEATURE_DESCRIPTIONS.get(feature_name, feature_name)
+            
+            # Préparer un dictionnaire pour ce résultat
+            result = {
+                "feature": feature_name,
+                "display_name": display_name,
+                "shap_value": float(shap_value),
+                "impact_direction": "Favorable" if shap_value < 0 else "Défavorable",
+                "impact_value": abs(round(shap_value, 4)),
+                "real_value": "N/A"
+            }
+            
+            # Essayer de trouver la valeur réelle
+            if feature_name in FEATURE_MAPPING:
+                mapping = FEATURE_MAPPING[feature_name]
+                
+                if "computed" in mapping and mapping["computed"]:
+                    # Pour les valeurs calculées à la volée
+                    try:
+                        result["real_value"] = mapping["formula"](client_details)
+                    except Exception as e:
+                        logger.warning(f"Erreur lors du calcul de la valeur réelle pour {feature_name}: {e}")
+                        result["real_value"] = "N/A"
+                else:
+                    # Pour les valeurs directement accessibles
+                    section = mapping.get("section")
+                    key = mapping.get("key")
+                    
+                    if section in client_details and key in client_details[section]:
+                        value = client_details[section][key]
+                        
+                        # Appliquer une transformation si nécessaire
+                        if "transform" in mapping and callable(mapping["transform"]):
+                            try:
+                                value = mapping["transform"](value)
+                            except Exception as e:
+                                logger.warning(f"Erreur lors de la transformation pour {feature_name}: {e}")
+                        
+                        result["real_value"] = value
+            
+            # Formater la valeur si c'est un nombre
+            if isinstance(result["real_value"], (int, float)):
+                result["real_value"] = round(result["real_value"], 2)
+            
+            mapped_results.append(result)
+        
+        logger.info(f"Valeurs SHAP mappées calculées pour client {client_id}")
+        
+        return jsonify({
+            "client_id": int(client_id),
+            "mapped_shap_values": mapped_results,
+            "status": "OK"
+        })
+        
+    except BadRequest as e:
+        logger.error(f"Erreur de requête pour les valeurs SHAP mappées du client {client_id}: {e}")
+        return jsonify({
+            "erreur": "Requête invalide",
+            "details": str(e),
+            "status": "INVALID_REQUEST"
+        }), 400
+    except Exception as e:
+        logger.error(f"Erreur lors du calcul des valeurs SHAP mappées pour client {client_id}: {e}")
+        return jsonify({
+            "erreur": "Erreur lors du calcul des valeurs SHAP mappées",
             "details": str(e),
             "status": "ERROR"
         }), 500
@@ -206,9 +618,48 @@ def get_shap_values(client_id):
 # Ajouter un endpoint pour les clients disponibles
 @app.route('/clients', methods=['GET'])
 def get_available_clients():
+    """
+    Retourne la liste des IDs clients disponibles.
+    ---
+    parameters:
+      - name: limit
+        in: query
+        type: integer
+        required: false
+        default: 100
+        description: Nombre maximum de clients à retourner
+      - name: offset
+        in: query
+        type: integer
+        required: false
+        default: 0
+        description: Index de départ pour la pagination
+    responses:
+      200:
+        description: Liste des clients récupérée avec succès
+      400:
+        description: Paramètres de requête invalides
+      500:
+        description: Erreur interne du serveur
+    """
     try:
-        limit = request.args.get('limit', default=100, type=int)
-        offset = request.args.get('offset', default=0, type=int)
+        # Validation des paramètres
+        try:
+            limit = int(request.args.get('limit', 100))
+            offset = int(request.args.get('offset', 0))
+            if limit <= 0 or offset < 0:
+                return jsonify({
+                    "erreur": "Les paramètres 'limit' et 'offset' doivent être positifs",
+                    "status": "INVALID_REQUEST"
+                }), 400
+        except ValueError:
+            return jsonify({
+                "erreur": "Les paramètres 'limit' et 'offset' doivent être des entiers",
+                "status": "INVALID_REQUEST"
+            }), 400
+        
+        # Récupérer les données depuis GitHub (avec cache)
+        test_df = fetch_github_data()
         
         client_ids = test_df['SK_ID_CURR'].tolist()
         paginated_ids = client_ids[offset:offset+limit]
@@ -220,8 +671,15 @@ def get_available_clients():
             "offset": offset,
             "status": "OK"
         })
+    except BadRequest as e:
+        logger.error(f"Erreur de requête pour la liste des clients: {e}")
+        return jsonify({
+            "erreur": "Requête invalide",
+            "details": str(e),
+            "status": "INVALID_REQUEST"
+        }), 400
     except Exception as e:
-        logging.error(f"Erreur lors de la récupération des IDs clients: {e}")
+        logger.error(f"Erreur lors de la récupération des IDs clients: {e}")
         return jsonify({
             "erreur": "Erreur lors de la récupération des IDs clients",
             "details": str(e),
@@ -232,9 +690,35 @@ def get_available_clients():
 @app.route('/client/<int:client_id>/details', methods=['GET'])
 def get_client_details(client_id):
     """
-    Renvoie les détails d'un client spécifique pour l'affichage dans le dashboard
+    Renvoie les détails d'un client spécifique pour l'affichage dans le dashboard.
+    ---
+    parameters:
+      - name: client_id
+        in: path
+        type: integer
+        required: true
+        description: Identifiant unique du client
+    responses:
+      200:
+        description: Détails du client récupérés avec succès
+      400:
+        description: ID client invalide
+      404:
+        description: Client introuvable
+      500:
+        description: Erreur interne du serveur
     """
     try:
+        # Validation du client_id
+        if client_id <= 0:
+            return jsonify({
+                "erreur": "ID client invalide",
+                "status": "INVALID_REQUEST"
+            }), 400
+            
+        # Récupérer les données depuis GitHub (avec cache)
+        test_df = fetch_github_data()
+        
         client_row = test_df[test_df['SK_ID_CURR'] == client_id]
         if client_row.empty:
             return jsonify({
@@ -294,18 +778,82 @@ def get_client_details(client_id):
         }
         
         return jsonify(response)
+    except BadRequest as e:
+        logger.error(f"Erreur de requête pour les détails du client {client_id}: {e}")
+        return jsonify({
+            "erreur": "Requête invalide",
+            "details": str(e),
+            "status": "INVALID_REQUEST"
+        }), 400
     except Exception as e:
-        logging.error(f"Erreur lors de la récupération des détails du client {client_id}: {e}")
+        logger.error(f"Erreur lors de la récupération des détails du client {client_id}: {e}")
         return jsonify({
             "erreur": "Erreur lors de la récupération des détails du client",
             "details": str(e),
             "status": "ERROR"
         }), 500
 
+# Endpoint pour vérifier l'état de l'API
+@app.route('/health', methods=['GET'])
+def health_check():
+    """
+    Vérifie si l'API est fonctionnelle.
+    ---
+    responses:
+      200:
+        description: API fonctionnelle
+      500:
+        description: Problème avec l'API
+    """
+    try:
+        # Vérifier si les composants critiques sont chargés
+        if model is None or features is None:
+            return jsonify({
+                "status": "ERROR",
+                "message": "Modèle ou features non chargés"
+            }), 500
+        
+        return jsonify({
+            "status": "OK",
+            "version": "1.0.0",
+            "model": model_name,
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Erreur lors du health check: {e}")
+        return jsonify({
+            "status": "ERROR",
+            "message": str(e)
+        }), 500
+
+@app.errorhandler(404)
+def not_found(error):
+    """Gère les erreurs 404 (page non trouvée)"""
+    logger.warning(f"Erreur 404: {request.path}")
+    return jsonify({
+        "erreur": "Ressource introuvable",
+        "path": request.path,
+        "status": "NOT_FOUND"
+    }), 404
+
+@app.errorhandler(400)
+def bad_request(error):
+    """Gère les erreurs 400 (mauvaise requête)"""
+    logger.warning(f"Erreur 400: {error}")
+    return jsonify({
+        "erreur": "Requête invalide",
+        "details": str(error),
+        "status": "INVALID_REQUEST"
+    }), 400
+
 @app.errorhandler(500)
 def internal_error(error):
-    logging.error(f"Erreur 500 : {error}")
-    return jsonify({"erreur": "Erreur interne du serveur"}), 500
+    """Gère les erreurs 500 (erreur interne du serveur)"""
+    logger.error(f"Erreur 500 : {error}")
+    return jsonify({
+        "erreur": "Erreur interne du serveur",
+        "status": "ERROR"
+    }), 500
 
 if __name__ == "__main__":
     app.run(debug=True, port=5800)
