@@ -1,20 +1,7 @@
 """
 Page de comparaison entre clients
-
-Cette version conserve l'ensemble des visuels de la page :
-- cartes statut client
-- tableaux de comparaison (infos perso, crédits)
-- analyse univariée (distribution des probabilités)
-- analyse bivariée : section intégrée (choix limité à paires métier significatives,
-  transformations appliquées en backend et invisibles pour les conseillers)
-- comparaison des risques (bar chart)
-- explications et footer
-
-Modifications :
-- Option technique supprimée : transformations gérées en backend, pas d'options visibles.
-- UI métier : l'utilisateur choisit une paire pré-définie compréhensible.
 """
-
+import traceback
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -27,6 +14,11 @@ from utils.api_client import get_client_prediction, get_client_details, get_avai
 from config import COLORBLIND_FRIENDLY_PALETTE, UI_CONFIG, FEATURE_DESCRIPTIONS
 
 st.set_page_config(page_title="Comparaison de Clients - Dashboard de Scoring Crédit", page_icon="📊", layout="wide")
+
+# Ensure some missing feature descriptions exist (in-memory) so UI does not show "Pas de description disponible"
+FEATURE_DESCRIPTIONS.setdefault("AMT_GOODS_PRICE", "Prix du bien/service financé (montant en devise locale). Ex. prix du véhicule ou du bien acheté.")
+FEATURE_DESCRIPTIONS.setdefault("AMT_ANNUITY", "Montant de l'annuité / mensualité (exprimé dans la devise locale). Utilisé pour estimer l'effort de paiement du client.")
+FEATURE_DESCRIPTIONS.setdefault("NAME_EDUCATION_TYPE", "Niveau d'éducation du client (ex.: Secondary, Higher education). Utile pour segmenter la clientèle et comprendre des différences de profil.")
 
 # --- Styles légers pour accessibilité ---
 st.markdown("""
@@ -104,6 +96,37 @@ def backend_prepare_plot(df, x_feat, y_feat):
     y_label = FEATURE_DESCRIPTIONS.get(y_feat, y_feat)
 
     return dfp, x_label, y_label
+
+# --- Sanitize helper to avoid pyarrow conversion errors ---
+def sanitize_df_for_streamlit(df):
+    """
+    Ensure DataFrame columns are compatible with pyarrow/Streamlit rendering.
+    - decode bytes to str
+    - coerce mixed object columns to numeric if mostly numeric else to str
+    """
+    if df is None:
+        return df
+    df = df.copy()
+    for col in df.columns:
+        try:
+            # decode bytes in column if any
+            if df[col].dtype == object:
+                df[col] = df[col].apply(lambda v: v.decode('utf-8', errors='ignore') if isinstance(v, (bytes, bytearray)) else v)
+        except Exception:
+            try:
+                df[col] = df[col].astype(object)
+            except Exception:
+                pass
+
+        # if still object, try to coerce to numeric when many values numeric
+        if df[col].dtype == object:
+            coerced = pd.to_numeric(df[col], errors='coerce')
+            num_count = int(coerced.notna().sum())
+            if num_count >= max(3, int(len(df) * 0.4)):
+                df[col] = coerced
+            else:
+                df[col] = df[col].astype(str).replace('None', '')
+    return df
 
 # ---------- Chargement liste clients ----------
 with st.spinner("Chargement de la liste des clients..."):
@@ -188,7 +211,8 @@ for client_id, data in client_data.items():
         "Ancienneté d'emploi": pi.get("employment_years", "N/A"),
     })
 comparison_df = pd.DataFrame(comparison_data)
-st.dataframe(comparison_df, use_container_width=True)
+comparison_df = sanitize_df_for_streamlit(comparison_df)
+st.dataframe(comparison_df, width='stretch')
 
 st.subheader("Comparaison des crédits demandés")
 credit_data = []
@@ -207,7 +231,8 @@ for client_id, data in client_data.items():
         "Ratio mensualité/revenu": payment_ratio
     })
 credit_df = pd.DataFrame(credit_data)
-st.dataframe(credit_df, use_container_width=True)
+credit_df = sanitize_df_for_streamlit(credit_df)
+st.dataframe(credit_df, width='stretch')
 
 # ---------- Analyse univariée ----------
 st.subheader("Analyse univariée : distribution des probabilités de défaut")
@@ -237,7 +262,7 @@ else:
         fig_hist.add_vline(x=ref_prob, line_dash="dash", line_color="black", annotation_text=f"Réf #{reference_client}: {ref_prob:.1%}", annotation_position="top right")
     except Exception:
         ref_prob = None
-    st.plotly_chart(fig_hist, use_container_width=True)
+    st.plotly_chart(fig_hist, width='stretch')
 
     if ref_prob is not None:
         percentile = (np.sum(np.array(probs) <= ref_prob) / len(probs)) * 100
@@ -300,20 +325,82 @@ if not rows:
 else:
     df = pd.DataFrame(rows)
 
-    # si catégorie vs score => boxplot
+    # si catégorie vs score => boxplot + résumé adapté (regroupement des petites catégories)
     if pair_type == "cat_vs_score":
-        df["category"] = df["x_raw"].astype(str)
+        # préparations
+        df["category"] = df["x_raw"].astype(str).fillna("Inconnu")
         df["value"] = pd.to_numeric(df["y_raw"], errors="coerce")
-        df = df.dropna(subset=["value"])
+        df = df.dropna(subset=["value"]).copy()
+
+        # --- Exclusion explicite des niveaux 'Higher education' (décision métier) ---
+        # On exclut toute catégorie dont le libellé contient 'higher' (insensible à la casse)
+        try:
+            has_higher = df["category"].str.lower().str.contains("higher", na=False)
+            if has_higher.any():
+                df = df[~has_higher].copy()
+                st.info("Les clients ayant un niveau 'Higher education' ont été exclus de cette analyse (décision métier).")
+        except Exception:
+            # si une erreur survient dans la détection, on n'interrompt pas l'analyse
+            pass
+
         if df.empty:
-            st.info("Pas assez de données pour le boxplot.")
+            st.info("Après exclusion des niveaux 'Higher education', pas assez de données pour cette paire. Essayez une autre paire.")
         else:
-            fig_box = px.box(df, x="category", y="value", points="all",
-                             labels={"category": FEATURE_DESCRIPTIONS.get(x_feature, x_feature),
+            # effectifs par catégorie
+            counts = df["category"].value_counts(dropna=False).rename_axis("category").reset_index(name="n")
+            total = counts["n"].sum()
+            counts["pct"] = counts["n"] / total
+
+            # seuils métier : regrouper catégories trop petites
+            MIN_COUNT = 5         # au moins 5 clients
+            MIN_PCT = 0.03        # ou 3% minimum
+            rare_cats = counts[(counts["n"] < MIN_COUNT) | (counts["pct"] < MIN_PCT)]["category"].tolist()
+
+            if rare_cats:
+                df["category_grouped"] = df["category"].apply(lambda c: "Autre" if c in rare_cats else c)
+            else:
+                df["category_grouped"] = df["category"]
+
+            # résumé par catégorie groupée
+            summary = df.groupby("category_grouped")["value"].agg(
+                n="count", median=lambda s: s.median(), q1=lambda s: s.quantile(0.25), q3=lambda s: s.quantile(0.75)
+            ).reset_index()
+            summary = summary.sort_values("median", ascending=False)
+            ordered_cats = summary["category_grouped"].tolist()
+            df["category_grouped"] = pd.Categorical(df["category_grouped"], categories=ordered_cats, ordered=True)
+
+            # afficher tableau d'effectifs et avertissement si petits effectifs
+            st.markdown("Effectifs par niveau d'éducation (les petites catégories sont regroupées en 'Autre') :")
+            summary_disp = summary[["category_grouped", "n"]].rename(columns={"category_grouped": "Niveau d'éducation", "n": "Effectif"})
+            summary_disp = sanitize_df_for_streamlit(summary_disp)
+            st.dataframe(summary_disp, width='stretch')
+
+            small_groups = summary[summary["n"] < MIN_COUNT]
+            if not small_groups.empty:
+                st.info("Quelques niveaux ont un effectif faible après regroupement. Interprète les différences avec prudence.")
+
+            # boxplot ordonné par médiane
+            fig_box = px.box(df, x="category_grouped", y="value", points="all",
+                             labels={"category_grouped": FEATURE_DESCRIPTIONS.get(x_feature, x_feature),
                                      "value": FEATURE_DESCRIPTIONS.get(y_feature, y_feature)},
                              title=pair_labels[choice_key],
                              color_discrete_sequence=[COLORBLIND_FRIENDLY_PALETTE.get("primary", "#636EFA")])
-            st.plotly_chart(fig_box, use_container_width=True)
+            fig_box.update_layout(xaxis_title="Niveau d'éducation", yaxis_title=FEATURE_DESCRIPTIONS.get(y_feature, y_feature))
+            st.plotly_chart(fig_box, width='stretch')
+
+            # barplot des effectifs
+            fig_counts = px.bar(summary, x="category_grouped", y="n",
+                                labels={"category_grouped": "Niveau d'éducation", "n": "Effectif"},
+                                title="Effectifs par niveau d'éducation (après regroupement)")
+            st.plotly_chart(fig_counts, width='stretch')
+
+            # indiquer la catégorie du client de référence si présente
+            try:
+                ref_cat = df.loc[df["client_id"] == reference_client, "category_grouped"].iloc[0]
+                st.info(f"Le client de référence appartient au niveau d'éducation : **{ref_cat}**")
+            except Exception:
+                pass
+
     else:
         df_prep, x_label, y_label = backend_prepare_plot(df, x_feature, y_feature)
 
@@ -363,14 +450,14 @@ else:
         # Option simple : montrer une droite de tendance purement visuelle
         if st.checkbox("Afficher droite de tendance (aide visuelle)", value=False):
             try:
-                lr = LinearRegression().fit(df_prep[["x_plot"]], df_prep[["y_plot"]])
+                lr = LinearRegression().fit(df_prep[["x_plot"]], df_prep["y_plot"])
                 x_line = np.linspace(df_prep["x_plot"].min(), df_prep["x_plot"].max(), 200)
                 y_line = lr.predict(x_line.reshape(-1,1)).flatten()
                 fig.add_trace(go.Scatter(x=x_line, y=y_line, mode="lines", line=dict(color="black", dash="dash"), name="Tendance"))
             except Exception:
                 st.info("Impossible de tracer la droite de tendance sur ces données.")
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 # ---------- Explications simples ----------
 if st.button("Explication des caractéristiques sélectionnées", key="exp_feat"):
@@ -384,7 +471,10 @@ if st.button("Explication des caractéristiques sélectionnées", key="exp_feat"
 
 # ---------- Comparaison des risques ----------
 st.subheader("Comparaison des risques de défaut")
-threshold = client_data[list(client_data.keys())[0]]["prediction"].get("threshold", 0.5)
+try:
+    threshold = client_data[list(client_data.keys())[0]]["prediction"].get("threshold", 0.5)
+except Exception:
+    threshold = 0.5
 sorted_clients = sorted([(cid, dd["prediction"].get("probability", 0)) for cid, dd in client_data.items()], key=lambda x: x[1])
 
 fig = go.Figure()
@@ -409,7 +499,7 @@ for i, (cid, prob) in enumerate(sorted_clients):
     fig.add_annotation(x=pos_x, y=i, text=f"{prob:.1%}", showarrow=False, xanchor="left")
 
 fig.update_layout(title="Comparaison des risques de défaut par client", height=max(300, 150 + 40 * len(sorted_clients)), xaxis=dict(title="Probabilité de défaut", range=[-0.1, 1.05], tickformat=".0%"), yaxis=dict(showticklabels=False))
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width='stretch')
 
 # ---------- Footer ----------
 st.markdown("""
@@ -418,5 +508,3 @@ st.markdown("""
     <strong>Comparaison de clients</strong> — Transformations appliquées automatiquement pour faciliter l'interprétation ; tooltips conservent les valeurs brutes.
 </div>
 """, unsafe_allow_html=True)
-```
-
