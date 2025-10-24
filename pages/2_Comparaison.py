@@ -20,6 +20,8 @@ st.set_page_config(page_title="Comparaison de Clients - Dashboard de Scoring Cr�
 FEATURE_DESCRIPTIONS.setdefault("AMT_GOODS_PRICE", "Prix du bien/service financé (montant en devise locale). Ex. prix du véhicule ou du bien acheté.")
 FEATURE_DESCRIPTIONS.setdefault("AMT_ANNUITY", "Montant de l'annuité / mensualité (exprimé dans la devise locale). Utilisé pour estimer l'effort de paiement du client.")
 FEATURE_DESCRIPTIONS.setdefault("NAME_EDUCATION_TYPE", "Niveau d'éducation du client (ex.: Secondary, Higher education). Utile pour segmenter la clientèle et comprendre des différences de profil.")
+FEATURE_DESCRIPTIONS.setdefault("DAYS_EMPLOYED", "Ancienneté d'emploi du client (en jours dans les données sources, converti en années pour l'affichage). Indicateur de stabilité professionnelle.")
+FEATURE_DESCRIPTIONS.setdefault("AMT_INCOME_TOTAL", "Revenu total annuel du client (en devise locale). Base pour calculer les ratios d'endettement.")
 
 # --- Styles légers pour accessibilité ---
 st.markdown("""
@@ -76,7 +78,7 @@ def backend_prepare_plot(df, x_feat, y_feat):
         dfp["y_num_conv"] = dfp["y_num"]
 
     # Money compression heuristic
-    money_feats = {"AMT_GOODS_PRICE", "AMT_CREDIT", "AMT_ANNUITY"}
+    money_feats = {"AMT_GOODS_PRICE", "AMT_CREDIT", "AMT_ANNUITY", "AMT_INCOME_TOTAL"}
     if (x_feat in money_feats) or (y_feat in money_feats):
         x_pre = np.where(dfp["x_num_conv"] > 0, np.log1p(dfp["x_num_conv"]), dfp["x_num_conv"])
         y_pre = np.where(dfp["y_num_conv"] > 0, np.log1p(dfp["y_num_conv"]), dfp["y_num_conv"])
@@ -97,6 +99,24 @@ def backend_prepare_plot(df, x_feat, y_feat):
     y_label = FEATURE_DESCRIPTIONS.get(y_feat, y_feat)
 
     return dfp, x_label, y_label
+
+def get_feature_from_client_data(client_details, feature_name):
+    """
+    Récupère une feature depuis les données client, en gérant les cas spéciaux
+    comme AMT_INCOME_TOTAL qui peut être dans personal_info au lieu de features
+    """
+    features = client_details.get("features", {})
+    
+    # Essayer d'abord dans features
+    if feature_name in features:
+        return features[feature_name]
+    
+    # Cas spéciaux : certaines features peuvent être dans d'autres sections
+    if feature_name == "AMT_INCOME_TOTAL":
+        personal_info = client_details.get("personal_info", {})
+        return personal_info.get("income", None)
+    
+    return None
 
 # --- Sanitize helper to avoid pyarrow conversion errors ---
 def sanitize_df_for_streamlit(df):
@@ -280,13 +300,14 @@ else:
 # ---------- Analyse bivariée (section intégrée) ----------
 st.subheader("Analyse bivariée : comparer deux caractéristiques pertinentes")
 
-# Paires métiers pré-définies (choix restreint et compréhensible)
-# NOTE: la paire "education_vs_ext3" a été retirée délibérément.
+# ✅ NOUVELLES PAIRES MÉTIER plus pertinentes pour les conseillers clients
 PAIRS = [
     {"key": "price_vs_credit", "x": "AMT_GOODS_PRICE", "y": "AMT_CREDIT", "label": "Prix du bien vs Montant du crédit", "type": "money_vs_money"},
     {"key": "ext3_vs_credit", "x": "EXT_SOURCE_3", "y": "AMT_CREDIT", "label": "Score externe (EXT_SOURCE_3) vs Montant du crédit", "type": "score_vs_money"},
     {"key": "ext3_vs_annuity", "x": "EXT_SOURCE_3", "y": "AMT_ANNUITY", "label": "Score externe (EXT_SOURCE_3) vs Mensualité (annuité)", "type": "score_vs_money"},
-    {"key": "age_vs_ext2", "x": "DAYS_BIRTH", "y": "EXT_SOURCE_2", "label": "Âge vs Score externe (EXT_SOURCE_2)", "type": "age_vs_score"}
+    {"key": "age_vs_employed", "x": "DAYS_BIRTH", "y": "DAYS_EMPLOYED", "label": "Âge vs Ancienneté d'emploi", "type": "age_vs_employed"},
+    {"key": "annuity_vs_income", "x": "AMT_ANNUITY", "y": "AMT_INCOME_TOTAL", "label": "Mensualité vs Revenus", "type": "money_vs_money"},
+    {"key": "credit_vs_age", "x": "AMT_CREDIT", "y": "DAYS_BIRTH", "label": "Montant crédit vs Âge", "type": "money_vs_age"}
 ]
 pair_map = {p["key"]: p for p in PAIRS}
 pair_labels = {p["key"]: p["label"] for p in PAIRS}
@@ -307,11 +328,13 @@ with st.spinner("Chargement d'un échantillon de clients pour la bivariée..."):
         try:
             d = get_client_details(cid)
             p = get_client_prediction(cid)
-            if not d or "features" not in d or not p:
+            if not d or not p:
                 continue
-            feats = d["features"]
-            x_raw = feats.get(x_feature, None)
-            y_raw = feats.get(y_feature, None)
+            
+            # Utiliser la fonction helper pour récupérer les features
+            x_raw = get_feature_from_client_data(d, x_feature)
+            y_raw = get_feature_from_client_data(d, y_feature)
+            
             if x_raw is None or y_raw is None:
                 continue
             prob = p.get("probability", 0)
@@ -449,9 +472,24 @@ else:
 
         st.plotly_chart(fig, width='stretch')
 
+        # ✅ AJOUT : Interprétations métier spécifiques selon la paire choisie
+        st.markdown("#### 💡 Interprétation métier")
+        if choice_key == "price_vs_credit":
+            st.info("**Analyse Crédit/Bien :** Les points sur la diagonale indiquent un crédit égal au prix du bien. Les points au-dessus suggèrent un sur-financement (frais inclus), ceux en-dessous un apport personnel.")
+        elif choice_key == "ext3_vs_credit":
+            st.info("**Analyse Risque/Exposition :** Score faible + crédit élevé = risque maximal. Les clients acceptés devraient concentrer dans la zone score élevé + crédit modéré.")
+        elif choice_key == "ext3_vs_annuity":
+            st.info("**Analyse Risque/Effort :** Score faible + mensualité élevée indique une forte probabilité de défaut. Utile pour ajuster les conditions de paiement.")
+        elif choice_key == "age_vs_employed":
+            st.info("**Analyse Stabilité :** Jeunes avec longue ancienneté = profils stables. Âge avancé avec ancienneté faible peut indiquer une reconversion ou instabilité.")
+        elif choice_key == "annuity_vs_income":
+            st.info("**Analyse Capacité :** Ratio mensualité/revenu fondamental. Un ratio élevé (>33%) indique un sur-endettement potentiel.")
+        elif choice_key == "credit_vs_age":
+            st.info("**Analyse Démographique :** Jeunes avec gros crédits = profils risqués (premiers achats). Seniors avec crédits élevés = potentiel patrimonial.")
+
 # ---------- Explications simples ----------
 if st.button("Explication des caractéristiques sélectionnées", key="exp_feat"):
-    for f in [locals().get("x_feature"), locals().get("y_feature")]:
+    for f in [x_feature, y_feature]:
         if f:
             desc = FEATURE_DESCRIPTIONS.get(f, None)
             if desc:
@@ -488,7 +526,7 @@ for i, (cid, prob) in enumerate(sorted_clients):
     pos_x = prob + 0.03 if abs(prob - threshold) > 0.05 else prob + 0.06
     fig.add_annotation(x=pos_x, y=i, text=f"{prob:.1%}", showarrow=False, xanchor="left")
 
-fig.update_layout(title="Comparaison des risques de défaut par client", height=max(300, 150 + 40 * len(sorted_clients)), xaxis=dict(title="Probabilité de défaut", range=[-0.1, 1.05], tickformat=".0%"), yaxis=dict(showticklabels=False))
+fig.update_layout(title="Comparaison des risques de défaut par client", height=max(300, 150 + 40 * len(sorted_clients)), xaxis=dict(title="Probabilité de défaut", range=[-0.1, 1.05], tickformat=".0%"), yaxis=dict(showticklabels=False, title="Clients (classés par risque croissant)"))
 st.plotly_chart(fig, width='stretch')
 
 # ---------- Footer ----------
