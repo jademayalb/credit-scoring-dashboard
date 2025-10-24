@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from utils.data_processing import process_credit_data
-from utils.model_utils import load_model, make_prediction
+# Retirez ces lignes qui causent l'erreur :
+# from utils.data_processing import process_credit_data
+# from utils.model_utils import load_model, make_prediction
 
 def main():
     st.title("🏦 Credit Scoring Dashboard")
@@ -17,11 +18,11 @@ def main():
         
     elif page == "Credit Analysis":
         st.header("Credit Risk Analysis")
-        # Add your credit analysis logic here
+        st.write("Cette section sera développée avec vos fonctions de traitement des données.")
         
     elif page == "Model Performance":
         st.header("Model Performance Metrics")
-        # Add your model performance visualization here
+        st.write("Cette section sera développée avec vos métriques de modèle.")
 
 if __name__ == "__main__":
     main()
