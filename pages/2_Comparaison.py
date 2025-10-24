@@ -288,8 +288,14 @@ PAIRS = [
     {"key": "ext3_vs_annuity", "x": "EXT_SOURCE_3", "y": "AMT_ANNUITY", "label": "Score externe (EXT_SOURCE_3) vs Mensualité (annuité)", "type": "score_vs_money"},
     {"key": "age_vs_ext2", "x": "DAYS_BIRTH", "y": "EXT_SOURCE_2", "label": "Âge vs Score externe (EXT_SOURCE_2)", "type": "age_vs_score"}
 ]
+# Defensive removal in case another file or earlier code reintroduced the pair
+PAIRS = [p for p in PAIRS if p.get("key") != "education_vs_ext3"]
 pair_map = {p["key"]: p for p in PAIRS}
 pair_labels = {p["key"]: p["label"] for p in PAIRS}
+
+# Debug lines you can temporarily enable to confirm PAIRS at runtime:
+# st.write("DEBUG PAIRS keys:", [p.get("key") for p in PAIRS])
+# st.write("DEBUG PAIRS labels:", pair_labels)
 
 choice_key = st.selectbox("Choisir une paire métier à explorer", options=list(pair_labels.keys()), format_func=lambda k: pair_labels[k])
 pair = pair_map[choice_key]
