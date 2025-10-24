@@ -360,6 +360,118 @@ def predict_client(client_id):
             "status": "ERROR"
         }), 500
 
+# --- AJOUT: endpoints POST pour supporter les simulations depuis le frontend ---
+@app.route('/predict', methods=['POST'])
+def predict_from_features():
+    """
+    Prédit la probabilité de défaut depuis un jeu de features transmis en JSON.
+    Body attendu : { "features": { "AMT_CREDIT": 400000, ... }, "client_id": 100001 (optionnel) }
+    """
+    try:
+        payload = request.get_json(force=True, silent=True)
+        if not payload or 'features' not in payload:
+            return jsonify({"erreur": "Payload JSON invalide ou clé 'features' manquante", "status": "INVALID_REQUEST"}), 400
+
+        features_payload = payload.get('features') or {}
+        client_id = payload.get('client_id', None)
+
+        # Si un client_id est fourni et qu'il existe dans le dataset, on prend la ligne de base et on override
+        df_row = None
+        if client_id is not None:
+            try:
+                cid = int(client_id)
+                df = fetch_github_data()
+                client_row = df[df['SK_ID_CURR'] == cid]
+                if not client_row.empty:
+                    base = client_row.iloc[0].to_dict()
+                    base.update(features_payload)
+                    df_row = pd.DataFrame([base])
+                else:
+                    # client absent -> on utilisera uniquement les features fournis
+                    df_row = pd.DataFrame([features_payload])
+            except Exception:
+                df_row = pd.DataFrame([features_payload])
+        else:
+            df_row = pd.DataFrame([features_payload])
+
+        processed = preprocess(df_row, features, poly_transformer)
+        X_imputed = imputer.transform(processed)
+        X_scaled = scaler.transform(X_imputed)
+
+        proba = float(model.predict_proba(X_scaled)[0, 1])
+        decision = "REFUSÉ" if proba >= threshold else "ACCEPTÉ"
+
+        resp = {
+            "client_id": int(client_id) if client_id is not None else None,
+            "probability": proba,
+            "threshold": float(threshold),
+            "decision": decision,
+            "model_name": model_name,
+            "status": "OK",
+            "input_features": features_payload
+        }
+        logger.info(f"POST /predict -> proba={proba:.4f} client_id={client_id}")
+        return jsonify(resp)
+    except BadRequest as e:
+        logger.error(f"POST /predict BadRequest: {e}")
+        return jsonify({"erreur": "Requête invalide", "details": str(e), "status": "INVALID_REQUEST"}), 400
+    except Exception as e:
+        logger.exception(f"Erreur interne POST /predict : {e}")
+        return jsonify({"erreur": "Erreur interne du serveur", "details": str(e), "status": "ERROR"}), 500
+
+
+@app.route('/predict/<int:client_id>', methods=['POST'])
+def predict_with_clientid_and_features(client_id):
+    """
+    Prédit en utilisant les données existantes d'un client (si présentes) en appliquant éventuellement
+    des overrides provenant du payload JSON {"features": {...}}.
+    """
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+        features_overrides = payload.get('features', {})
+
+        # Récupérer la ligne du client si présente
+        test_df_local = fetch_github_data()
+        client_row = test_df_local[test_df_local['SK_ID_CURR'] == client_id]
+
+        if client_row.empty and not features_overrides:
+            return jsonify({"erreur": f"Client ID {client_id} introuvable et pas de features fournis", "status": "NOT_FOUND"}), 404
+
+        if not client_row.empty:
+            # utiliser la ligne existante puis override les colonnes fournies
+            base = client_row.iloc[0].to_dict()
+            base.update(features_overrides)
+            df_row = pd.DataFrame([base])
+        else:
+            # Pas de client : utiliser uniquement les features fournis
+            df_row = pd.DataFrame([features_overrides])
+
+        processed = preprocess(df_row, features, poly_transformer)
+        X_imputed = imputer.transform(processed)
+        X_scaled = scaler.transform(X_imputed)
+
+        proba = float(model.predict_proba(X_scaled)[0, 1])
+        decision = "REFUSÉ" if proba >= threshold else "ACCEPTÉ"
+
+        resp = {
+            "client_id": int(client_id),
+            "probability": proba,
+            "threshold": float(threshold),
+            "decision": decision,
+            "model_name": model_name,
+            "status": "OK",
+            "input_features": features_overrides
+        }
+        logger.info(f"POST /predict/{client_id} -> proba={proba:.4f} (overrides: {list(features_overrides.keys())})")
+        return jsonify(resp)
+    except BadRequest as e:
+        logger.error(f"POST /predict/{client_id} BadRequest: {e}")
+        return jsonify({"erreur": "Requête invalide", "details": str(e), "status": "INVALID_REQUEST"}), 400
+    except Exception as e:
+        logger.exception(f"Erreur interne POST /predict/{client_id} : {e}")
+        return jsonify({"erreur": "Erreur interne du serveur", "details": str(e), "status": "ERROR"}), 500
+# --- FIN AJOUT: endpoints POST pour prediction ---
+
 # NOUVEL ENDPOINT POUR LES VALEURS SHAP
 @app.route('/shap_values/<int:client_id>', methods=['GET'])
 def get_shap_values(client_id):
