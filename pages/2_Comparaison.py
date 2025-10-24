@@ -280,12 +280,12 @@ else:
 st.subheader("Analyse bivariée : comparer deux caractéristiques pertinentes")
 
 # Paires métiers pré-définies (choix restreint et compréhensible)
+# NOTE: la paire "education_vs_ext3" a été retirée délibérément.
 PAIRS = [
     {"key": "price_vs_credit", "x": "AMT_GOODS_PRICE", "y": "AMT_CREDIT", "label": "Prix du bien vs Montant du crédit", "type": "money_vs_money"},
     {"key": "ext3_vs_credit", "x": "EXT_SOURCE_3", "y": "AMT_CREDIT", "label": "Score externe (EXT_SOURCE_3) vs Montant du crédit", "type": "score_vs_money"},
     {"key": "ext3_vs_annuity", "x": "EXT_SOURCE_3", "y": "AMT_ANNUITY", "label": "Score externe (EXT_SOURCE_3) vs Mensualité (annuité)", "type": "score_vs_money"},
-    {"key": "age_vs_ext2", "x": "DAYS_BIRTH", "y": "EXT_SOURCE_2", "label": "Âge vs Score externe (EXT_SOURCE_2)", "type": "age_vs_score"},
-    {"key": "education_vs_ext3", "x": "NAME_EDUCATION_TYPE", "y": "EXT_SOURCE_3", "label": "Niveau d'éducation vs Score externe (EXT_SOURCE_3)", "type": "cat_vs_score"}
+    {"key": "age_vs_ext2", "x": "DAYS_BIRTH", "y": "EXT_SOURCE_2", "label": "Âge vs Score externe (EXT_SOURCE_2)", "type": "age_vs_score"}
 ]
 pair_map = {p["key"]: p for p in PAIRS}
 pair_labels = {p["key"]: p["label"] for p in PAIRS}
@@ -332,19 +332,8 @@ else:
         df["value"] = pd.to_numeric(df["y_raw"], errors="coerce")
         df = df.dropna(subset=["value"]).copy()
 
-        # --- Exclusion explicite des niveaux 'Higher education' (décision métier) ---
-        # On exclut toute catégorie dont le libellé contient 'higher' (insensible à la casse)
-        try:
-            has_higher = df["category"].str.lower().str.contains("higher", na=False)
-            if has_higher.any():
-                df = df[~has_higher].copy()
-                st.info("Les clients ayant un niveau 'Higher education' ont été exclus de cette analyse (décision métier).")
-        except Exception:
-            # si une erreur survient dans la détection, on n'interrompt pas l'analyse
-            pass
-
         if df.empty:
-            st.info("Après exclusion des niveaux 'Higher education', pas assez de données pour cette paire. Essayez une autre paire.")
+            st.info("Pas assez de données numériques pour le boxplot.")
         else:
             # effectifs par catégorie
             counts = df["category"].value_counts(dropna=False).rename_axis("category").reset_index(name="n")
@@ -370,14 +359,14 @@ else:
             df["category_grouped"] = pd.Categorical(df["category_grouped"], categories=ordered_cats, ordered=True)
 
             # afficher tableau d'effectifs et avertissement si petits effectifs
-            st.markdown("Effectifs par niveau d'éducation (les petites catégories sont regroupées en 'Autre') :")
-            summary_disp = summary[["category_grouped", "n"]].rename(columns={"category_grouped": "Niveau d'éducation", "n": "Effectif"})
+            st.markdown("Effectifs par catégorie (les petites catégories sont regroupées en 'Autre') :")
+            summary_disp = summary[["category_grouped", "n"]].rename(columns={"category_grouped": "Catégorie", "n": "Effectif"})
             summary_disp = sanitize_df_for_streamlit(summary_disp)
             st.dataframe(summary_disp, width='stretch')
 
             small_groups = summary[summary["n"] < MIN_COUNT]
             if not small_groups.empty:
-                st.info("Quelques niveaux ont un effectif faible après regroupement. Interprète les différences avec prudence.")
+                st.info("Quelques catégories ont un effectif faible après regroupement. Interprète les différences avec prudence.")
 
             # boxplot ordonné par médiane
             fig_box = px.box(df, x="category_grouped", y="value", points="all",
@@ -385,19 +374,19 @@ else:
                                      "value": FEATURE_DESCRIPTIONS.get(y_feature, y_feature)},
                              title=pair_labels[choice_key],
                              color_discrete_sequence=[COLORBLIND_FRIENDLY_PALETTE.get("primary", "#636EFA")])
-            fig_box.update_layout(xaxis_title="Niveau d'éducation", yaxis_title=FEATURE_DESCRIPTIONS.get(y_feature, y_feature))
+            fig_box.update_layout(xaxis_title="Catégorie", yaxis_title=FEATURE_DESCRIPTIONS.get(y_feature, y_feature))
             st.plotly_chart(fig_box, width='stretch')
 
             # barplot des effectifs
             fig_counts = px.bar(summary, x="category_grouped", y="n",
-                                labels={"category_grouped": "Niveau d'éducation", "n": "Effectif"},
-                                title="Effectifs par niveau d'éducation (après regroupement)")
+                                labels={"category_grouped": "Catégorie", "n": "Effectif"},
+                                title="Effectifs par catégorie (après regroupement)")
             st.plotly_chart(fig_counts, width='stretch')
 
             # indiquer la catégorie du client de référence si présente
             try:
                 ref_cat = df.loc[df["client_id"] == reference_client, "category_grouped"].iloc[0]
-                st.info(f"Le client de référence appartient au niveau d'éducation : **{ref_cat}**")
+                st.info(f"Le client de référence appartient à la catégorie : **{ref_cat}**")
             except Exception:
                 pass
 
