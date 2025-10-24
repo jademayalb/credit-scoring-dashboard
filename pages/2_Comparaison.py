@@ -1,3 +1,4 @@
+```python name=pages/2_Comparaison.py
 """
 Page de comparaison entre clients
 
@@ -13,11 +14,6 @@ Cette version conserve l'ensemble des visuels de la page :
 Modifications :
 - Option technique supprimée : transformations gérées en backend, pas d'options visibles.
 - UI métier : l'utilisateur choisit une paire pré-définie compréhensible.
-- Amélioration spécifique pour NAME_EDUCATION_TYPE vs EXT_SOURCE_3 :
-  - calcule effectifs par catégorie, regroupe les petites catégories en "Autre",
-  - ordonne les catégories par médiane de EXT_SOURCE_3,
-  - affiche tableau d'effectifs, boxplot et barplot,
-  - met en évidence la catégorie du client de référence.
 """
 
 import streamlit as st
@@ -305,69 +301,20 @@ if not rows:
 else:
     df = pd.DataFrame(rows)
 
-    # si catégorie vs score => boxplot + résumé adapté (regroupement des petites catégories)
+    # si catégorie vs score => boxplot
     if pair_type == "cat_vs_score":
-        # préparations
-        df["category"] = df["x_raw"].astype(str).fillna("Inconnu")
+        df["category"] = df["x_raw"].astype(str)
         df["value"] = pd.to_numeric(df["y_raw"], errors="coerce")
-        df = df.dropna(subset=["value"]).copy()
-
+        df = df.dropna(subset=["value"])
         if df.empty:
-            st.info("Pas assez de données numériques pour le boxplot.")
+            st.info("Pas assez de données pour le boxplot.")
         else:
-            # effectifs par catégorie
-            counts = df["category"].value_counts(dropna=False).rename_axis("category").reset_index(name="n")
-            total = counts["n"].sum()
-            counts["pct"] = counts["n"] / total
-
-            # seuils métier : regrouper catégories trop petites
-            MIN_COUNT = 5         # au moins 5 clients
-            MIN_PCT = 0.03        # ou 3% minimum
-            rare_cats = counts[(counts["n"] < MIN_COUNT) | (counts["pct"] < MIN_PCT)]["category"].tolist()
-
-            if rare_cats:
-                df["category_grouped"] = df["category"].apply(lambda c: "Autre" if c in rare_cats else c)
-            else:
-                df["category_grouped"] = df["category"]
-
-            # résumé par catégorie groupée
-            summary = df.groupby("category_grouped")["value"].agg(
-                n="count", median=lambda s: s.median(), q1=lambda s: s.quantile(0.25), q3=lambda s: s.quantile(0.75)
-            ).reset_index()
-            summary = summary.sort_values("median", ascending=False)
-            ordered_cats = summary["category_grouped"].tolist()
-            df["category_grouped"] = pd.Categorical(df["category_grouped"], categories=ordered_cats, ordered=True)
-
-            # afficher tableau d'effectifs et avertissement si petits effectifs
-            st.markdown("Effectifs par niveau d'éducation (les petites catégories sont regroupées en 'Autre') :")
-            st.dataframe(summary[["category_grouped", "n"]].rename(columns={"category_grouped": "Niveau d'éducation", "n": "Effectif"}), use_container_width=True)
-
-            small_groups = summary[summary["n"] < MIN_COUNT]
-            if not small_groups.empty:
-                st.info("Quelques niveaux ont un effectif faible après regroupement. Interprète les différences avec prudence.")
-
-            # boxplot ordonné par médiane
-            fig_box = px.box(df, x="category_grouped", y="value", points="all",
-                             labels={"category_grouped": FEATURE_DESCRIPTIONS.get(x_feature, x_feature),
+            fig_box = px.box(df, x="category", y="value", points="all",
+                             labels={"category": FEATURE_DESCRIPTIONS.get(x_feature, x_feature),
                                      "value": FEATURE_DESCRIPTIONS.get(y_feature, y_feature)},
                              title=pair_labels[choice_key],
                              color_discrete_sequence=[COLORBLIND_FRIENDLY_PALETTE.get("primary", "#636EFA")])
-            fig_box.update_layout(xaxis_title="Niveau d'éducation", yaxis_title=FEATURE_DESCRIPTIONS.get(y_feature, y_feature))
             st.plotly_chart(fig_box, use_container_width=True)
-
-            # barplot des effectifs
-            fig_counts = px.bar(summary, x="category_grouped", y="n",
-                                labels={"category_grouped": "Niveau d'éducation", "n": "Effectif"},
-                                title="Effectifs par niveau d'éducation (après regroupement)")
-            st.plotly_chart(fig_counts, use_container_width=True)
-
-            # indiquer la catégorie du client de référence si présente
-            try:
-                ref_cat = df.loc[df["client_id"] == reference_client, "category_grouped"].iloc[0]
-                st.info(f"Le client de référence appartient au niveau d'éducation : **{ref_cat}**")
-            except Exception:
-                pass
-
     else:
         df_prep, x_label, y_label = backend_prepare_plot(df, x_feature, y_feature)
 
@@ -472,3 +419,4 @@ st.markdown("""
     <strong>Comparaison de clients</strong> — Transformations appliquées automatiquement pour faciliter l'interprétation ; tooltips conservent les valeurs brutes.
 </div>
 """, unsafe_allow_html=True)
+```
