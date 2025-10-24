@@ -1,7 +1,7 @@
 """
 Page de comparaison entre clients
+
 """
-import re
 import traceback
 import streamlit as st
 import pandas as pd
@@ -10,19 +10,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import r2_score
-import scipy.stats as ss
 
 from utils.api_client import get_client_prediction, get_client_details, get_available_clients
 from config import COLORBLIND_FRIENDLY_PALETTE, UI_CONFIG, FEATURE_DESCRIPTIONS
 
 st.set_page_config(page_title="Comparaison de Clients - Dashboard de Scoring Crédit", page_icon="📊", layout="wide")
 
-# Ensure some missing feature descriptions exist (in-memory)
-FEATURE_DESCRIPTIONS.setdefault("AMT_GOODS_PRICE", "Prix du bien/service financé (montant en devise locale).")
-FEATURE_DESCRIPTIONS.setdefault("AMT_ANNUITY", "Montant de l'annuité / mensualité (exprimé dans la devise locale).")
-FEATURE_DESCRIPTIONS.setdefault("AMT_INCOME_TOTAL", "Revenu total déclaré du client.")
-FEATURE_DESCRIPTIONS.setdefault("NAME_EDUCATION_TYPE", "Niveau d'éducation du client. (IGNORÉ pour l'analyse bivariée)")
+# Ensure some missing feature descriptions exist (in-memory) so UI does not show "Pas de description disponible"
+FEATURE_DESCRIPTIONS.setdefault("AMT_GOODS_PRICE", "Prix du bien/service financé (montant en devise locale). Ex. prix du véhicule ou du bien acheté.")
+FEATURE_DESCRIPTIONS.setdefault("AMT_ANNUITY", "Montant de l'annuité / mensualité (exprimé dans la devise locale). Utilisé pour estimer l'effort de paiement du client.")
+FEATURE_DESCRIPTIONS.setdefault("NAME_EDUCATION_TYPE", "Niveau d'éducation du client (ex.: Secondary, Higher education). Utile pour segmenter la clientèle et comprendre des différences de profil.")
 
 # --- Styles légers pour accessibilité ---
 st.markdown("""
@@ -35,7 +32,7 @@ st.markdown("""
 
 # --- Titre ---
 st.title("Comparaison de profils clients")
-st.markdown("Comparez plusieurs profils clients côte à côte. Transformations automatiques appliquées en arrière-plan.")
+st.markdown("Comparez plusieurs profils clients côte à côte et explorez des relations entre caractéristiques importantes. Les transformations nécessaires sont appliquées automatiquement en arrière-plan.")
 
 # ---------- Helpers ----------
 def normalize_id_list(lst):
@@ -52,7 +49,7 @@ def normalize_id_list(lst):
 
 def convert_days_to_years(series):
     s = pd.to_numeric(series, errors="coerce")
-    s = s.replace({365243: np.nan})
+    s = s.replace({365243: np.nan})  # placeholder cleaning if present
     return (-s / 365.0)
 
 def backend_prepare_plot(df, x_feat, y_feat):
@@ -61,14 +58,13 @@ def backend_prepare_plot(df, x_feat, y_feat):
     - DAYS_* -> années positives
     - compression log1p pour montants (si présent)
     - standard scaling pour comparabilité visuelle
-    Retourne df avec x_plot/y_plot, x_num_conv, y_num_conv et labels.
+    Retourne df avec x_plot/y_plot et labels.
     """
     dfp = df.copy()
-    # try to keep numeric conversions in separate columns
     dfp["x_num"] = pd.to_numeric(dfp["x_raw"], errors="coerce")
     dfp["y_num"] = pd.to_numeric(dfp["y_raw"], errors="coerce")
 
-    # Convert DAYS fields to years positive
+    # Convert DAYS fields
     if x_feat in ("DAYS_BIRTH", "DAYS_EMPLOYED"):
         dfp["x_num_conv"] = convert_days_to_years(dfp["x_num"])
     else:
@@ -80,7 +76,7 @@ def backend_prepare_plot(df, x_feat, y_feat):
         dfp["y_num_conv"] = dfp["y_num"]
 
     # Money compression heuristic
-    money_feats = {"AMT_GOODS_PRICE", "AMT_CREDIT", "AMT_ANNUITY", "AMT_INCOME_TOTAL"}
+    money_feats = {"AMT_GOODS_PRICE", "AMT_CREDIT", "AMT_ANNUITY"}
     if (x_feat in money_feats) or (y_feat in money_feats):
         x_pre = np.where(dfp["x_num_conv"] > 0, np.log1p(dfp["x_num_conv"]), dfp["x_num_conv"])
         y_pre = np.where(dfp["y_num_conv"] > 0, np.log1p(dfp["y_num_conv"]), dfp["y_num_conv"])
@@ -88,7 +84,7 @@ def backend_prepare_plot(df, x_feat, y_feat):
         x_pre = dfp["x_num_conv"].values
         y_pre = dfp["y_num_conv"].values
 
-    # Standard scaling for plotting comparability
+    # Standard scaling to make comparable plotting scales
     try:
         sx = StandardScaler(); sy = StandardScaler()
         dfp["x_plot"] = sx.fit_transform(np.array(x_pre).reshape(-1,1)).flatten()
@@ -102,15 +98,19 @@ def backend_prepare_plot(df, x_feat, y_feat):
 
     return dfp, x_label, y_label
 
+# --- Sanitize helper to avoid pyarrow conversion errors ---
 def sanitize_df_for_streamlit(df):
     """
     Ensure DataFrame columns are compatible with pyarrow/Streamlit rendering.
+    - decode bytes to str
+    - coerce mixed object columns to numeric if mostly numeric else to str
     """
     if df is None:
         return df
     df = df.copy()
     for col in df.columns:
         try:
+            # decode bytes in column if any
             if df[col].dtype == object:
                 df[col] = df[col].apply(lambda v: v.decode('utf-8', errors='ignore') if isinstance(v, (bytes, bytearray)) else v)
         except Exception:
@@ -119,6 +119,7 @@ def sanitize_df_for_streamlit(df):
             except Exception:
                 pass
 
+        # if still object, try to coerce to numeric when many values numeric
         if df[col].dtype == object:
             coerced = pd.to_numeric(df[col], errors='coerce')
             num_count = int(coerced.notna().sum())
@@ -167,6 +168,7 @@ with st.spinner("Chargement des données des clients sélectionnés..."):
             if pred and det:
                 client_data[int(cid)] = {"prediction": pred, "details": det}
         except Exception:
+            # silencieux ici ; affichage d'erreur en cas d'absence totale plus bas
             pass
 
 if not client_data:
@@ -278,52 +280,24 @@ else:
 # ---------- Analyse bivariée (section intégrée) ----------
 st.subheader("Analyse bivariée : comparer deux caractéristiques pertinentes")
 
-# Paires métiers pré-définies (toutes sans NAME_EDUCATION_TYPE)
+# Paires métiers pré-définies (choix restreint et compréhensible)
+# NOTE: la paire "education_vs_ext3" a été retirée délibérément.
 PAIRS = [
     {"key": "price_vs_credit", "x": "AMT_GOODS_PRICE", "y": "AMT_CREDIT", "label": "Prix du bien vs Montant du crédit", "type": "money_vs_money"},
-    {"key": "credit_vs_goods", "x": "AMT_CREDIT", "y": "AMT_GOODS_PRICE", "label": "Montant du crédit vs Valeur du bien", "type": "money_vs_money"},
-    {"key": "annuity_vs_income", "x": "AMT_ANNUITY", "y": "AMT_INCOME_TOTAL", "label": "Mensualité vs Revenu (annuel)", "type": "money_vs_money"},
     {"key": "ext3_vs_credit", "x": "EXT_SOURCE_3", "y": "AMT_CREDIT", "label": "Score externe (EXT_SOURCE_3) vs Montant du crédit", "type": "score_vs_money"},
     {"key": "ext3_vs_annuity", "x": "EXT_SOURCE_3", "y": "AMT_ANNUITY", "label": "Score externe (EXT_SOURCE_3) vs Mensualité (annuité)", "type": "score_vs_money"},
-    {"key": "ext2_vs_ext3", "x": "EXT_SOURCE_2", "y": "EXT_SOURCE_3", "label": "EXT_SOURCE_2 vs EXT_SOURCE_3", "type": "score_vs_score"},
-    {"key": "age_vs_ext2", "x": "DAYS_BIRTH", "y": "EXT_SOURCE_2", "label": "Âge vs Score externe (EXT_SOURCE_2)", "type": "age_vs_score"},
-    {"key": "credit_vs_annuity", "x": "AMT_CREDIT", "y": "AMT_ANNUITY", "label": "Montant du crédit vs Mensualité", "type": "money_vs_money"},
-    {"key": "prob_vs_credit", "x": "probability", "y": "AMT_CREDIT", "label": "Probabilité vs Montant du crédit", "type": "score_vs_money"},
+    {"key": "age_vs_ext2", "x": "DAYS_BIRTH", "y": "EXT_SOURCE_2", "label": "Âge vs Score externe (EXT_SOURCE_2)", "type": "age_vs_score"}
 ]
-
-# Defensive: remove any pair referencing education (in case another file re-injected it)
-def is_education_pair(p):
-    key = (p.get("key") or "").lower()
-    x = (p.get("x") or "").upper()
-    y = (p.get("y") or "").upper()
-    label = (p.get("label") or "").lower()
-    if "education" in key:
-        return True
-    if x == "NAME_EDUCATION_TYPE" or y == "NAME_EDUCATION_TYPE":
-        return True
-    if "éducation" in label or "education" in label:
-        return True
-    return False
-
-PAIRS = [p for p in PAIRS if not is_education_pair(p)]
-# remove duplicate keys defensively
-PAIRS = [p for i, p in enumerate(PAIRS) if p.get("key") not in {q.get("key") for q in PAIRS[:i]}]
-
 pair_map = {p["key"]: p for p in PAIRS}
 pair_labels = {p["key"]: p["label"] for p in PAIRS}
-pair_keys = list(pair_labels.keys())
 
-# Debug — uncomment if you need to inspect runtime list
-# st.write("DEBUG PAIRS keys:", pair_keys)
-# st.write("DEBUG PAIRS labels:", pair_labels)
-
-choice_key = st.selectbox("Choisir une paire métier à explorer", options=pair_keys, format_func=lambda k: pair_labels[k])
+choice_key = st.selectbox("Choisir une paire métier à explorer", options=list(pair_labels.keys()), format_func=lambda k: pair_labels[k])
 pair = pair_map[choice_key]
 x_feature = pair["x"]; y_feature = pair["y"]; pair_type = pair["type"]
 st.markdown(f"Comparaison sélectionnée : **{pair_labels[choice_key]}** (transformations automatiques appliquées).")
 
-# construire échantillon pour graphe (jusqu'à limit_for_bi clients)
-limit_for_bi = UI_CONFIG.get("bi_limit", 100)
+# construire échantillon pour graphe (jusqu'à 100 clients)
+limit_for_bi = 100
 with st.spinner("Chargement d'un échantillon de clients pour la bivariée..."):
     sample_ids = normalize_id_list(get_available_clients(limit=limit_for_bi) or [])[:limit_for_bi]
     if not sample_ids:
@@ -336,15 +310,8 @@ with st.spinner("Chargement d'un échantillon de clients pour la bivariée..."):
             if not d or "features" not in d or not p:
                 continue
             feats = d["features"]
-            # support probability as pseudo-feature for pairs
-            if x_feature == "probability":
-                x_raw = p.get("probability", None)
-            else:
-                x_raw = feats.get(x_feature, None)
-            if y_feature == "probability":
-                y_raw = p.get("probability", None)
-            else:
-                y_raw = feats.get(y_feature, None)
+            x_raw = feats.get(x_feature, None)
+            y_raw = feats.get(y_feature, None)
             if x_raw is None or y_raw is None:
                 continue
             prob = p.get("probability", 0)
@@ -359,9 +326,9 @@ if not rows:
 else:
     df = pd.DataFrame(rows)
 
-    # ---- categorical vs score not expected because education removed; keep check for safety
+    # si catégorie vs score => boxplot + résumé adapté (regroupement des petites catégories)
     if pair_type == "cat_vs_score":
-        # fallback (shouldn't be used since we excluded education), keep previous logic
+        # préparations
         df["category"] = df["x_raw"].astype(str).fillna("Inconnu")
         df["value"] = pd.to_numeric(df["y_raw"], errors="coerce")
         df = df.dropna(subset=["value"]).copy()
@@ -369,76 +336,92 @@ else:
         if df.empty:
             st.info("Pas assez de données numériques pour le boxplot.")
         else:
+            # effectifs par catégorie
             counts = df["category"].value_counts(dropna=False).rename_axis("category").reset_index(name="n")
             total = counts["n"].sum()
             counts["pct"] = counts["n"] / total
-            MIN_COUNT = 5
-            MIN_PCT = 0.03
+
+            # seuils métier : regrouper catégories trop petites
+            MIN_COUNT = 5         # au moins 5 clients
+            MIN_PCT = 0.03        # ou 3% minimum
             rare_cats = counts[(counts["n"] < MIN_COUNT) | (counts["pct"] < MIN_PCT)]["category"].tolist()
+
             if rare_cats:
                 df["category_grouped"] = df["category"].apply(lambda c: "Autre" if c in rare_cats else c)
             else:
                 df["category_grouped"] = df["category"]
+
+            # résumé par catégorie groupée
             summary = df.groupby("category_grouped")["value"].agg(
                 n="count", median=lambda s: s.median(), q1=lambda s: s.quantile(0.25), q3=lambda s: s.quantile(0.75)
-            ).reset_index().sort_values("median", ascending=False)
+            ).reset_index()
+            summary = summary.sort_values("median", ascending=False)
             ordered_cats = summary["category_grouped"].tolist()
             df["category_grouped"] = pd.Categorical(df["category_grouped"], categories=ordered_cats, ordered=True)
+
+            # afficher tableau d'effectifs et avertissement si petits effectifs
             st.markdown("Effectifs par catégorie (les petites catégories sont regroupées en 'Autre') :")
             summary_disp = summary[["category_grouped", "n"]].rename(columns={"category_grouped": "Catégorie", "n": "Effectif"})
-            st.dataframe(sanitize_df_for_streamlit(summary_disp), width='stretch')
-            st.plotly_chart(px.box(df, x="category_grouped", y="value", points="all"), width='stretch')
+            summary_disp = sanitize_df_for_streamlit(summary_disp)
+            st.dataframe(summary_disp, width='stretch')
+
+            small_groups = summary[summary["n"] < MIN_COUNT]
+            if not small_groups.empty:
+                st.info("Quelques catégories ont un effectif faible après regroupement. Interprète les différences avec prudence.")
+
+            # boxplot ordonné par médiane
+            fig_box = px.box(df, x="category_grouped", y="value", points="all",
+                             labels={"category_grouped": FEATURE_DESCRIPTIONS.get(x_feature, x_feature),
+                                     "value": FEATURE_DESCRIPTIONS.get(y_feature, y_feature)},
+                             title=pair_labels[choice_key],
+                             color_discrete_sequence=[COLORBLIND_FRIENDLY_PALETTE.get("primary", "#636EFA")])
+            fig_box.update_layout(xaxis_title="Catégorie", yaxis_title=FEATURE_DESCRIPTIONS.get(y_feature, y_feature))
+            st.plotly_chart(fig_box, width='stretch')
+
+            # barplot des effectifs
+            fig_counts = px.bar(summary, x="category_grouped", y="n",
+                                labels={"category_grouped": "Catégorie", "n": "Effectif"},
+                                title="Effectifs par catégorie (après regroupement)")
+            st.plotly_chart(fig_counts, width='stretch')
+
+            # indiquer la catégorie du client de référence si présente
+            try:
+                ref_cat = df.loc[df["client_id"] == reference_client, "category_grouped"].iloc[0]
+                st.info(f"Le client de référence appartient à la catégorie : **{ref_cat}**")
+            except Exception:
+                pass
+
     else:
-        # Numeric vs Numeric (scatter) — prepare and plot
         df_prep, x_label, y_label = backend_prepare_plot(df, x_feature, y_feature)
 
-        # mark selected/reference
+        # marquer sélection/référence
         sel_set = set(selected_clients)
         df_prep["is_selected"] = df_prep["client_id"].isin(sel_set)
         df_prep["is_reference"] = df_prep["client_id"] == int(reference_client)
 
-        # descriptive correlations on converted numeric values (not scaled)
-        x_vals = pd.to_numeric(df_prep.get("x_num_conv", df_prep.get("x_plot")), errors="coerce")
-        y_vals = pd.to_numeric(df_prep.get("y_num_conv", df_prep.get("y_plot")), errors="coerce")
-        mask = x_vals.notna() & y_vals.notna()
-        pearson_r = pearson_p = spearman_r = spearman_p = np.nan
-        if mask.sum() > 1:
-            try:
-                pearson_r, pearson_p = ss.pearsonr(x_vals[mask], y_vals[mask])
-            except Exception:
-                pearson_r, pearson_p = np.nan, np.nan
-            try:
-                spearman_r, spearman_p = ss.spearmanr(x_vals[mask], y_vals[mask])
-            except Exception:
-                spearman_r, spearman_p = np.nan, np.nan
-
-        st.markdown(f"**Corrélations :** Pearson r = {pearson_r:.3f} (p={pearson_p:.3g}), Spearman ρ = {spearman_r:.3f} (p={spearman_p:.3g})")
-
-        # Build scatter figure
-        fig = go.Figure()
-        # Others (background)
         df_other = df_prep[~df_prep["is_selected"] & ~df_prep["is_reference"]]
         df_sel = df_prep[df_prep["is_selected"] & ~df_prep["is_reference"]]
         df_ref = df_prep[df_prep["is_reference"]]
 
+        fig = go.Figure()
         if not df_other.empty:
             fig.add_trace(go.Scatter(
                 x=df_other["x_plot"], y=df_other["y_plot"], mode="markers",
                 marker=dict(size=8, symbol="circle",
-                            color=df_other["probability"] if "probability" in df_other else COLORBLIND_FRIENDLY_PALETTE.get("primary","#636EFA"),
-                            colorscale='RdYlBu', showscale=True, opacity=0.8),
-                customdata=np.stack([df_other["client_id"], df_other["x_num_conv"], df_other["y_num_conv"], df_other["probability"]], axis=-1),
+                            color=[COLORBLIND_FRIENDLY_PALETTE.get('accepted','#2ca02c') if d == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE.get('refused','#d62728') for d in df_other["decision"]],
+                            opacity=0.8),
+                customdata=np.stack([df_other["client_id"], df_other["x_raw"], df_other["y_raw"], df_other["probability"]], axis=-1),
                 hovertemplate=("Client #%{customdata[0]}<br>" + f"{x_label}: " + "%{customdata[1]}<br>" + f"{y_label}: " + "%{customdata[2]}<br>Probabilité: %{customdata[3]:.1%}<extra></extra>"),
                 name="Autres clients"
             ))
         if not df_sel.empty:
             fig.add_trace(go.Scatter(
                 x=df_sel["x_plot"], y=df_sel["y_plot"], mode="markers+text",
-                marker=dict(size=12, symbol="diamond", line=dict(width=1, color="black"),
-                            color=df_sel["probability"] if "probability" in df_sel else COLORBLIND_FRIENDLY_PALETTE.get('accepted','#2ca02c')),
+                marker=dict(size=13, symbol="diamond", line=dict(width=1, color="black"),
+                            color=[COLORBLIND_FRIENDLY_PALETTE.get('accepted','#2ca02c') if d == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE.get('refused','#d62728') for d in df_sel["decision"]]),
                 text=[f"#{int(c)}" for c in df_sel["client_id"]],
                 textposition="top center",
-                customdata=np.stack([df_sel["client_id"], df_sel["x_num_conv"], df_sel["y_num_conv"], df_sel["probability"]], axis=-1),
+                customdata=np.stack([df_sel["client_id"], df_sel["x_raw"], df_sel["y_raw"], df_sel["probability"]], axis=-1),
                 hovertemplate=("Client #%{customdata[0]}<br>" + f"{x_label}: " + "%{customdata[1]}<br>" + f"{y_label}: " + "%{customdata[2]}<br>Probabilité: %{customdata[3]:.1%}<extra></extra>"),
                 name="Clients sélectionnés"
             ))
@@ -446,50 +429,23 @@ else:
             r = df_ref.iloc[0]
             fig.add_trace(go.Scatter(
                 x=[r["x_plot"]], y=[r["y_plot"]], mode="markers+text",
-                marker=dict(size=18, symbol="star", color="black", line=dict(width=2, color='white')),
+                marker=dict(size=20, symbol="star", color="black", line=dict(width=2, color='white')),
                 text=[f"Réf #{int(r['client_id'])}"], textposition="bottom center",
-                customdata=np.stack([r["client_id"], r.get("x_num_conv"), r.get("y_num_conv"), r.get("probability")], axis=-1),
                 hovertemplate=(f"Client #{int(r['client_id'])}<br>{x_label}: {r['x_raw']}<br>{y_label}: {r['y_raw']}<br>Probabilité: {r['probability']:.1%}<extra></extra>"),
                 name="Client référence"
             ))
 
-        fig.update_layout(title=pair_labels[choice_key], xaxis_title=x_label, yaxis_title=y_label, template="simple_white", height=620)
+        fig.update_layout(title=pair_labels[choice_key], xaxis_title=x_label, yaxis_title=y_label, template="simple_white", height=600)
 
-        # Regression line option
-        if st.checkbox("Afficher droite de tendance (linéaire)", value=False):
+        # Option simple : montrer une droite de tendance purement visuelle
+        if st.checkbox("Afficher droite de tendance (aide visuelle)", value=False):
             try:
-                lr = LinearRegression().fit(df_prep[["x_plot"]], df_prep[["y_plot"]])
+                lr = LinearRegression().fit(df_prep[["x_plot"]], df_prep["y_plot"])
                 x_line = np.linspace(df_prep["x_plot"].min(), df_prep["x_plot"].max(), 200)
                 y_line = lr.predict(x_line.reshape(-1,1)).flatten()
-                fig.add_trace(go.Scatter(x=x_line, y=y_line, mode="lines", line=dict(color="black", dash="dash"), name="Régression linéaire"))
-                y_pred = lr.predict(df_prep[["x_plot"]]).flatten()
-                r2 = r2_score(df_prep["y_plot"], y_pred)
-                st.markdown(f"Régression (échelle normalisée) : R² = {r2:.3f}")
+                fig.add_trace(go.Scatter(x=x_line, y=y_line, mode="lines", line=dict(color="black", dash="dash"), name="Tendance"))
             except Exception:
-                st.info("Impossible de calculer la droite de tendance sur ces données.")
-
-        # LOWESS option
-        if st.checkbox("Afficher courbe lissée (LOWESS)", value=False):
-            try:
-                from statsmodels.nonparametric.smoothers_lowess import lowess
-                loess_sm = lowess(df_prep["y_plot"].values, df_prep["x_plot"].values, frac=0.3)
-                fig.add_trace(go.Scatter(x=loess_sm[:,0], y=loess_sm[:,1], mode="lines", line=dict(color="orange", dash="dot"), name="LOWESS"))
-            except Exception:
-                st.info("LOWESS indisponible (installer statsmodels).")
-
-        # Special: price_vs_credit ratio histogram
-        if choice_key in {"price_vs_credit", "credit_vs_goods"}:
-            try:
-                amt_credit = pd.to_numeric(df["y_raw"] if choice_key=="price_vs_credit" else df["x_raw"], errors="coerce")
-                amt_goods = pd.to_numeric(df["x_raw"] if choice_key=="price_vs_credit" else df["y_raw"], errors="coerce")
-                ratio = amt_credit / amt_goods
-                ratio = ratio.replace([np.inf, -np.inf], np.nan)
-                median_ratio = np.nanmedian(ratio)
-                st.markdown(f"Ratio médian AMT_CREDIT / AMT_GOODS_PRICE : {median_ratio:.3f}")
-                fig_ratio = px.histogram(pd.DataFrame({"ratio": ratio.dropna()}), x="ratio", nbins=30, title="Distribution du ratio AMT_CREDIT / AMT_GOODS_PRICE")
-                st.plotly_chart(fig_ratio, width='stretch')
-            except Exception:
-                pass
+                st.info("Impossible de tracer la droite de tendance sur ces données.")
 
         st.plotly_chart(fig, width='stretch')
 
