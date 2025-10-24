@@ -1,6 +1,5 @@
 """
 Page de comparaison entre clients
-
 """
 import traceback
 import streamlit as st
@@ -19,7 +18,8 @@ st.set_page_config(page_title="Comparaison de Clients - Dashboard de Scoring Cr�
 # Ensure some missing feature descriptions exist (in-memory) so UI does not show "Pas de description disponible"
 FEATURE_DESCRIPTIONS.setdefault("AMT_GOODS_PRICE", "Prix du bien/service financé (montant en devise locale). Ex. prix du véhicule ou du bien acheté.")
 FEATURE_DESCRIPTIONS.setdefault("AMT_ANNUITY", "Montant de l'annuité / mensualité (exprimé dans la devise locale). Utilisé pour estimer l'effort de paiement du client.")
-FEATURE_DESCRIPTIONS.setdefault("NAME_EDUCATION_TYPE", "Niveau d'éducation du client (ex.: Secondary, Higher education). Utile pour segmenter la clientèle et comprendre des différences de profil.")
+FEATURE_DESCRIPTIONS.setdefault("AMT_INCOME_TOTAL", "Revenu total déclaré du client.")
+FEATURE_DESCRIPTIONS.setdefault("NAME_EDUCATION_TYPE", "Niveau d'éducation du client (ex.: Secondary, Higher education). (IGNORÉ pour l'analyse bivariée)")
 
 # --- Styles légers pour accessibilité ---
 st.markdown("""
@@ -76,7 +76,7 @@ def backend_prepare_plot(df, x_feat, y_feat):
         dfp["y_num_conv"] = dfp["y_num"]
 
     # Money compression heuristic
-    money_feats = {"AMT_GOODS_PRICE", "AMT_CREDIT", "AMT_ANNUITY"}
+    money_feats = {"AMT_GOODS_PRICE", "AMT_CREDIT", "AMT_ANNUITY", "AMT_INCOME_TOTAL"}
     if (x_feat in money_feats) or (y_feat in money_feats):
         x_pre = np.where(dfp["x_num_conv"] > 0, np.log1p(dfp["x_num_conv"]), dfp["x_num_conv"])
         y_pre = np.where(dfp["y_num_conv"] > 0, np.log1p(dfp["y_num_conv"]), dfp["y_num_conv"])
@@ -281,15 +281,20 @@ else:
 st.subheader("Analyse bivariée : comparer deux caractéristiques pertinentes")
 
 # Paires métiers pré-définies (choix restreint et compréhensible)
-# NOTE: la paire "education_vs_ext3" a été retirée délibérément.
+# NOTE: toute paire utilisant NAME_EDUCATION_TYPE est exclue.
 PAIRS = [
     {"key": "price_vs_credit", "x": "AMT_GOODS_PRICE", "y": "AMT_CREDIT", "label": "Prix du bien vs Montant du crédit", "type": "money_vs_money"},
+    {"key": "credit_vs_goods", "x": "AMT_CREDIT", "y": "AMT_GOODS_PRICE", "label": "Montant du crédit vs Valeur du bien", "type": "money_vs_money"},
+    {"key": "annuity_vs_income", "x": "AMT_ANNUITY", "y": "AMT_INCOME_TOTAL", "label": "Mensualité vs Revenu (annuel)", "type": "money_vs_money"},
     {"key": "ext3_vs_credit", "x": "EXT_SOURCE_3", "y": "AMT_CREDIT", "label": "Score externe (EXT_SOURCE_3) vs Montant du crédit", "type": "score_vs_money"},
     {"key": "ext3_vs_annuity", "x": "EXT_SOURCE_3", "y": "AMT_ANNUITY", "label": "Score externe (EXT_SOURCE_3) vs Mensualité (annuité)", "type": "score_vs_money"},
-    {"key": "age_vs_ext2", "x": "DAYS_BIRTH", "y": "EXT_SOURCE_2", "label": "Âge vs Score externe (EXT_SOURCE_2)", "type": "age_vs_score"}
+    {"key": "ext2_vs_ext3", "x": "EXT_SOURCE_2", "y": "EXT_SOURCE_3", "label": "EXT_SOURCE_2 vs EXT_SOURCE_3", "type": "score_vs_score"},
+    {"key": "age_vs_ext2", "x": "DAYS_BIRTH", "y": "EXT_SOURCE_2", "label": "Âge vs Score externe (EXT_SOURCE_2)", "type": "age_vs_score"},
+    {"key": "credit_vs_annuity", "x": "AMT_CREDIT", "y": "AMT_ANNUITY", "label": "Montant du crédit vs Mensualité", "type": "money_vs_money"}
 ]
-# Defensive removal in case another file or earlier code reintroduced the pair
-PAIRS = [p for p in PAIRS if p.get("key") != "education_vs_ext3"]
+# Defensive removal in case another file reintroduced any education pair or duplicate keys
+PAIRS = [p for i, p in enumerate(PAIRS) if p.get("x") != "NAME_EDUCATION_TYPE" and p.get("key") not in {q.get("key") for q in PAIRS[:i]}]
+
 pair_map = {p["key"]: p for p in PAIRS}
 pair_labels = {p["key"]: p["label"] for p in PAIRS}
 
@@ -297,7 +302,9 @@ pair_labels = {p["key"]: p["label"] for p in PAIRS}
 # st.write("DEBUG PAIRS keys:", [p.get("key") for p in PAIRS])
 # st.write("DEBUG PAIRS labels:", pair_labels)
 
-choice_key = st.selectbox("Choisir une paire métier à explorer", options=list(pair_labels.keys()), format_func=lambda k: pair_labels[k])
+# build list of keys for selectbox (explicit)
+pair_keys = list(pair_labels.keys())
+choice_key = st.selectbox("Choisir une paire métier à explorer", options=pair_keys, format_func=lambda k: pair_labels[k])
 pair = pair_map[choice_key]
 x_feature = pair["x"]; y_feature = pair["y"]; pair_type = pair["type"]
 st.markdown(f"Comparaison sélectionnée : **{pair_labels[choice_key]}** (transformations automatiques appliquées).")
