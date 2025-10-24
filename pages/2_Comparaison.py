@@ -20,8 +20,9 @@ st.set_page_config(page_title="Comparaison de Clients - Dashboard de Scoring Cr�
 FEATURE_DESCRIPTIONS.setdefault("AMT_GOODS_PRICE", "Prix du bien/service financé (montant en devise locale). Ex. prix du véhicule ou du bien acheté.")
 FEATURE_DESCRIPTIONS.setdefault("AMT_ANNUITY", "Montant de l'annuité / mensualité (exprimé dans la devise locale). Utilisé pour estimer l'effort de paiement du client.")
 FEATURE_DESCRIPTIONS.setdefault("NAME_EDUCATION_TYPE", "Niveau d'éducation du client (ex.: Secondary, Higher education). Utile pour segmenter la clientèle et comprendre des différences de profil.")
-FEATURE_DESCRIPTIONS.setdefault("DAYS_EMPLOYED", "Ancienneté d'emploi du client (en jours dans les données sources, converti en années pour l'affichage). Indicateur de stabilité professionnelle.")
+FEATURE_DESCRIPTIONS.setdefault("DAYS_EMPLOYED", "Ancienneté d'emploi du client (converti automatiquement en années positives pour l'affichage). Indicateur de stabilité professionnelle.")
 FEATURE_DESCRIPTIONS.setdefault("AMT_INCOME_TOTAL", "Revenu total annuel du client (en devise locale). Base pour calculer les ratios d'endettement.")
+FEATURE_DESCRIPTIONS.setdefault("DAYS_BIRTH", "Âge du client (converti automatiquement en années positives pour l'affichage)")
 
 # --- Styles légers pour accessibilité ---
 st.markdown("""
@@ -50,9 +51,33 @@ def normalize_id_list(lst):
     return out
 
 def convert_days_to_years(series):
+    """
+    Convertit DAYS_BIRTH et DAYS_EMPLOYED en années positives et compréhensibles
+    DAYS_BIRTH: négatif dans les données -> âge positif 
+    DAYS_EMPLOYED: négatif dans les données -> ancienneté positive (sauf 365243 = valeur manquante)
+    """
     s = pd.to_numeric(series, errors="coerce")
-    s = s.replace({365243: np.nan})  # placeholder cleaning if present
-    return (-s / 365.0)
+    s = s.replace({365243: np.nan})  # valeur manquante pour DAYS_EMPLOYED
+    # Convertir en années positives : -(-19243)/365.25 = +52.7 ans
+    return (-s / 365.25)  # 365.25 pour tenir compte des années bissextiles
+
+def format_age_for_display(age_in_years):
+    """
+    Formate l'âge pour un affichage convivial
+    """
+    if pd.isna(age_in_years):
+        return "N/A"
+    return f"{age_in_years:.1f} ans"
+
+def format_employment_for_display(years):
+    """
+    Formate l'ancienneté d'emploi pour un affichage convivial
+    """
+    if pd.isna(years):
+        return "N/A"
+    if years < 1:
+        return f"{years*12:.0f} mois"
+    return f"{years:.1f} ans"
 
 def backend_prepare_plot(df, x_feat, y_feat):
     """
@@ -66,16 +91,28 @@ def backend_prepare_plot(df, x_feat, y_feat):
     dfp["x_num"] = pd.to_numeric(dfp["x_raw"], errors="coerce")
     dfp["y_num"] = pd.to_numeric(dfp["y_raw"], errors="coerce")
 
-    # Convert DAYS fields
+    # ✅ CORRECTION : Convert DAYS fields avec meilleur formatage
     if x_feat in ("DAYS_BIRTH", "DAYS_EMPLOYED"):
         dfp["x_num_conv"] = convert_days_to_years(dfp["x_num"])
+        # Créer une version formatée pour l'affichage
+        if x_feat == "DAYS_BIRTH":
+            dfp["x_display"] = dfp["x_num_conv"].apply(format_age_for_display)
+        else:  # DAYS_EMPLOYED
+            dfp["x_display"] = dfp["x_num_conv"].apply(format_employment_for_display)
     else:
         dfp["x_num_conv"] = dfp["x_num"]
+        dfp["x_display"] = dfp["x_raw"]
 
     if y_feat in ("DAYS_BIRTH", "DAYS_EMPLOYED"):
         dfp["y_num_conv"] = convert_days_to_years(dfp["y_num"])
+        # Créer une version formatée pour l'affichage
+        if y_feat == "DAYS_BIRTH":
+            dfp["y_display"] = dfp["y_num_conv"].apply(format_age_for_display)
+        else:  # DAYS_EMPLOYED
+            dfp["y_display"] = dfp["y_num_conv"].apply(format_employment_for_display)
     else:
         dfp["y_num_conv"] = dfp["y_num"]
+        dfp["y_display"] = dfp["y_raw"]
 
     # Money compression heuristic
     money_feats = {"AMT_GOODS_PRICE", "AMT_CREDIT", "AMT_ANNUITY", "AMT_INCOME_TOTAL"}
@@ -95,8 +132,19 @@ def backend_prepare_plot(df, x_feat, y_feat):
         dfp["x_plot"] = dfp["x_num_conv"]
         dfp["y_plot"] = dfp["y_num_conv"]
 
+    # ✅ AMÉLIORATION : Labels plus clairs pour les âges
     x_label = FEATURE_DESCRIPTIONS.get(x_feat, x_feat)
     y_label = FEATURE_DESCRIPTIONS.get(y_feat, y_feat)
+    
+    if x_feat == "DAYS_BIRTH":
+        x_label = "Âge (années)"
+    elif x_feat == "DAYS_EMPLOYED":
+        x_label = "Ancienneté d'emploi (années)"
+        
+    if y_feat == "DAYS_BIRTH":
+        y_label = "Âge (années)"
+    elif y_feat == "DAYS_EMPLOYED":
+        y_label = "Ancienneté d'emploi (années)"
 
     return dfp, x_label, y_label
 
@@ -433,7 +481,7 @@ else:
                 marker=dict(size=8, symbol="circle",
                             color=[COLORBLIND_FRIENDLY_PALETTE.get('accepted','#2ca02c') if d == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE.get('refused','#d62728') for d in df_other["decision"]],
                             opacity=0.8),
-                customdata=np.stack([df_other["client_id"], df_other["x_raw"], df_other["y_raw"], df_other["probability"]], axis=-1),
+                customdata=np.stack([df_other["client_id"], df_other.get("x_display", df_other["x_raw"]), df_other.get("y_display", df_other["y_raw"]), df_other["probability"]], axis=-1),
                 hovertemplate=("Client #%{customdata[0]}<br>" + f"{x_label}: " + "%{customdata[1]}<br>" + f"{y_label}: " + "%{customdata[2]}<br>Probabilité: %{customdata[3]:.1%}<extra></extra>"),
                 name="Autres clients"
             ))
@@ -444,7 +492,7 @@ else:
                             color=[COLORBLIND_FRIENDLY_PALETTE.get('accepted','#2ca02c') if d == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE.get('refused','#d62728') for d in df_sel["decision"]]),
                 text=[f"#{int(c)}" for c in df_sel["client_id"]],
                 textposition="top center",
-                customdata=np.stack([df_sel["client_id"], df_sel["x_raw"], df_sel["y_raw"], df_sel["probability"]], axis=-1),
+                customdata=np.stack([df_sel["client_id"], df_sel.get("x_display", df_sel["x_raw"]), df_sel.get("y_display", df_sel["y_raw"]), df_sel["probability"]], axis=-1),
                 hovertemplate=("Client #%{customdata[0]}<br>" + f"{x_label}: " + "%{customdata[1]}<br>" + f"{y_label}: " + "%{customdata[2]}<br>Probabilité: %{customdata[3]:.1%}<extra></extra>"),
                 name="Clients sélectionnés"
             ))
@@ -454,7 +502,7 @@ else:
                 x=[r["x_plot"]], y=[r["y_plot"]], mode="markers+text",
                 marker=dict(size=20, symbol="star", color="black", line=dict(width=2, color='white')),
                 text=[f"Réf #{int(r['client_id'])}"], textposition="bottom center",
-                hovertemplate=(f"Client #{int(r['client_id'])}<br>{x_label}: {r['x_raw']}<br>{y_label}: {r['y_raw']}<br>Probabilité: {r['probability']:.1%}<extra></extra>"),
+                hovertemplate=(f"Client #{int(r['client_id'])}<br>{x_label}: {r.get('x_display', r['x_raw'])}<br>{y_label}: {r.get('y_display', r['y_raw'])}<br>Probabilité: {r['probability']:.1%}<extra></extra>"),
                 name="Client référence"
             ))
 
