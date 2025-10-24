@@ -1,4 +1,3 @@
-```python name=pages/2_Comparaison.py
 """
 Page de comparaison entre clients
 
@@ -420,3 +419,4 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 ```
+
