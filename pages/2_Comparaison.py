@@ -1,5 +1,6 @@
 """
 Page de comparaison entre clients
+
 """
 import traceback
 import streamlit as st
