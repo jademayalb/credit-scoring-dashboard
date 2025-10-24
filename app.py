@@ -360,7 +360,7 @@ def predict_client(client_id):
             "status": "ERROR"
         }), 500
 
-# --- AJOUT: endpoints POST pour supporter les simulations depuis le frontend ---
+# --- ENDPOINTS POST CORRIGÉS POUR LA SIMULATION ---
 @app.route('/predict', methods=['POST'])
 def predict_from_features():
     """
@@ -369,31 +369,43 @@ def predict_from_features():
     """
     try:
         payload = request.get_json(force=True, silent=True)
-        if not payload or 'features' not in payload:
-            return jsonify({"erreur": "Payload JSON invalide ou clé 'features' manquante", "status": "INVALID_REQUEST"}), 400
+        if not payload:
+            return jsonify({"erreur": "Payload JSON vide", "status": "INVALID_REQUEST"}), 400
 
-        features_payload = payload.get('features') or {}
+        features_payload = payload.get('features', {})
         client_id = payload.get('client_id', None)
 
-        # Si un client_id est fourni et qu'il existe dans le dataset, on prend la ligne de base et on override
-        df_row = None
+        if not features_payload:
+            return jsonify({"erreur": "Aucune feature fournie", "status": "INVALID_REQUEST"}), 400
+
+        # 🔧 CORRECTION : Gestion améliorée des modifications de features
         if client_id is not None:
             try:
                 cid = int(client_id)
                 df = fetch_github_data()
                 client_row = df[df['SK_ID_CURR'] == cid]
                 if not client_row.empty:
+                    # ✅ PRENDRE TOUTES LES FEATURES DU CLIENT ORIGINAL
                     base = client_row.iloc[0].to_dict()
-                    base.update(features_payload)
+                    
+                    # ✅ APPLIQUER SEULEMENT LES MODIFICATIONS ENVOYÉES
+                    for feature_name, new_value in features_payload.items():
+                        if feature_name in base:
+                            old_value = base[feature_name]
+                            base[feature_name] = new_value
+                            logger.info(f"Modification appliquée: {feature_name} {old_value} -> {new_value}")
+                    
                     df_row = pd.DataFrame([base])
                 else:
-                    # client absent -> on utilisera uniquement les features fournis
-                    df_row = pd.DataFrame([features_payload])
-            except Exception:
-                df_row = pd.DataFrame([features_payload])
+                    return jsonify({"erreur": f"Client {client_id} non trouvé", "status": "NOT_FOUND"}), 404
+            except Exception as e:
+                logger.error(f"Erreur lors de la récupération du client {client_id}: {e}")
+                return jsonify({"erreur": f"Erreur client: {str(e)}", "status": "ERROR"}), 500
         else:
+            # Nouveau client : utiliser uniquement les features fournies
             df_row = pd.DataFrame([features_payload])
 
+        # ✅ PREPROCESSING OBLIGATOIRE
         processed = preprocess(df_row, features, poly_transformer)
         X_imputed = imputer.transform(processed)
         X_scaled = scaler.transform(X_imputed)
@@ -410,11 +422,9 @@ def predict_from_features():
             "status": "OK",
             "input_features": features_payload
         }
-        logger.info(f"POST /predict -> proba={proba:.4f} client_id={client_id}")
+        logger.info(f"POST /predict -> proba={proba:.4f} client_id={client_id} (features modifiées: {list(features_payload.keys())})")
         return jsonify(resp)
-    except BadRequest as e:
-        logger.error(f"POST /predict BadRequest: {e}")
-        return jsonify({"erreur": "Requête invalide", "details": str(e), "status": "INVALID_REQUEST"}), 400
+        
     except Exception as e:
         logger.exception(f"Erreur interne POST /predict : {e}")
         return jsonify({"erreur": "Erreur interne du serveur", "details": str(e), "status": "ERROR"}), 500
@@ -423,29 +433,34 @@ def predict_from_features():
 @app.route('/predict/<int:client_id>', methods=['POST'])
 def predict_with_clientid_and_features(client_id):
     """
-    Prédit en utilisant les données existantes d'un client (si présentes) en appliquant éventuellement
-    des overrides provenant du payload JSON {"features": {...}}.
+    Prédit en utilisant les données existantes d'un client en appliquant des overrides.
     """
     try:
         payload = request.get_json(force=True, silent=True) or {}
         features_overrides = payload.get('features', {})
 
-        # Récupérer la ligne du client si présente
+        # ✅ RÉCUPÉRER LE CLIENT OBLIGATOIREMENT
         test_df_local = fetch_github_data()
         client_row = test_df_local[test_df_local['SK_ID_CURR'] == client_id]
 
-        if client_row.empty and not features_overrides:
-            return jsonify({"erreur": f"Client ID {client_id} introuvable et pas de features fournis", "status": "NOT_FOUND"}), 404
+        if client_row.empty:
+            return jsonify({"erreur": f"Client ID {client_id} introuvable", "status": "NOT_FOUND"}), 404
 
-        if not client_row.empty:
-            # utiliser la ligne existante puis override les colonnes fournies
-            base = client_row.iloc[0].to_dict()
-            base.update(features_overrides)
-            df_row = pd.DataFrame([base])
-        else:
-            # Pas de client : utiliser uniquement les features fournis
-            df_row = pd.DataFrame([features_overrides])
+        # ✅ PARTIR DES DONNÉES COMPLÈTES DU CLIENT
+        base = client_row.iloc[0].to_dict()
+        
+        # ✅ APPLIQUER LES MODIFICATIONS UNE PAR UNE
+        modifications_appliquees = {}
+        for feature_name, new_value in features_overrides.items():
+            if feature_name in base:
+                old_value = base[feature_name]
+                base[feature_name] = new_value
+                modifications_appliquees[feature_name] = {"old": old_value, "new": new_value}
+                logger.info(f"Client {client_id}: {feature_name} {old_value} -> {new_value}")
+        
+        df_row = pd.DataFrame([base])
 
+        # ✅ PREPROCESSING COMPLET
         processed = preprocess(df_row, features, poly_transformer)
         X_imputed = imputer.transform(processed)
         X_scaled = scaler.transform(X_imputed)
@@ -460,17 +475,17 @@ def predict_with_clientid_and_features(client_id):
             "decision": decision,
             "model_name": model_name,
             "status": "OK",
-            "input_features": features_overrides
+            "input_features": features_overrides,
+            "modifications_applied": modifications_appliquees  # Debug info
         }
-        logger.info(f"POST /predict/{client_id} -> proba={proba:.4f} (overrides: {list(features_overrides.keys())})")
+        logger.info(f"POST /predict/{client_id} -> proba={proba:.4f} (modif: {list(features_overrides.keys())})")
         return jsonify(resp)
-    except BadRequest as e:
-        logger.error(f"POST /predict/{client_id} BadRequest: {e}")
-        return jsonify({"erreur": "Requête invalide", "details": str(e), "status": "INVALID_REQUEST"}), 400
+        
     except Exception as e:
         logger.exception(f"Erreur interne POST /predict/{client_id} : {e}")
         return jsonify({"erreur": "Erreur interne du serveur", "details": str(e), "status": "ERROR"}), 500
-# --- FIN AJOUT: endpoints POST pour prediction ---
+
+# --- FIN DES CORRECTIONS POUR LA SIMULATION ---
 
 # NOUVEL ENDPOINT POUR LES VALEURS SHAP
 @app.route('/shap_values/<int:client_id>', methods=['GET'])
