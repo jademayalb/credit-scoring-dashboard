@@ -1,23 +1,29 @@
 """
 Page de comparaison entre clients
 Permet de comparer les profils de différents clients et leurs scores
-Ajouts:
-- Analyse univariée (distribution des probabilités) avec position d'un client de référence et quantile (ex. dans les 25% les plus sûrs)
-- Analyse bivariée (scatter) entre deux features sélectionnables, coloration par décision et mise en évidence du client de référence
-- Sélection d'un client de référence parmi les clients sélectionnés
-- Bivariée améliorée: travail sur les 100 premiers clients, restriction aux 9 features prioritaires,
-  transformations/scaling (Aucun / MinMax / Standard / Log1p+Standard), mise en évidence différente
-  pour les clients sélectionnés et client de référence.
+
+Ajouts et modifications :
+- Analyse univariée (distribution des probabilités) avec position d'un client de référence et quantile
+- Analyse bivariée amélioree :
+    - Base : 100 premiers clients (application_test.csv via get_available_clients(limit=100))
+    - Restriction aux 9 features prioritaires
+    - Mode Simple (métiers) et Avancé (technique) pour la mise à l'échelle
+    - Transformations applicables en interne (Log1p+Standard, Standard, MinMax, Aucun)
+    - Mise en évidence :
+        - autres clients : cercles
+        - clients sélectionnés : diamant + label
+        - client référence : étoile
+    - Option d'affichage d'une droite de tendance (régression linéaire) et/ou de la ligne d'identité y=x
+    - Option boxplot alternatif si comparaison catégorie vs numérique
+- Conservation des valeurs brutes dans les tooltips
 """
 
-import os
 import math
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import requests
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 from utils.api_client import get_client_prediction, get_client_details, get_available_clients
@@ -25,7 +31,7 @@ from utils.api_client import get_client_prediction, get_client_details, get_avai
 # Import de la configuration
 from config import (
     COLORBLIND_FRIENDLY_PALETTE, UI_CONFIG,
-    FEATURE_DESCRIPTIONS, CSV_PATHS, PREDICT_ENDPOINT
+    FEATURE_DESCRIPTIONS, CSV_PATHS
 )
 
 # Configuration de la page
@@ -85,13 +91,28 @@ pour analyser les différences entre leurs caractéristiques et comprendre les v
 # Chargement de la liste des clients disponibles (application_test.csv contient les 100 premiers IDs)
 with st.spinner("Chargement de la liste des clients..."):
     try:
-        available_clients = get_available_clients(limit=UI_CONFIG.get("default_limit", 100))
+        available_clients = get_available_clients(limit=UI_CONFIG.get("default_limit", 100)) or []
     except Exception:
         available_clients = []
 
 if not available_clients:
     st.error("Impossible de charger la liste des clients.")
     st.stop()
+
+# Normaliser les IDs (utilisation interne)
+def normalize_id_list(lst):
+    out = []
+    for v in lst:
+        try:
+            out.append(int(v))
+        except Exception:
+            try:
+                out.append(int(str(v)))
+            except Exception:
+                out.append(v)
+    return out
+
+available_clients = normalize_id_list(available_clients)
 
 # Sélection des clients à comparer (multiselect)
 selected_clients = st.multiselect(
@@ -101,6 +122,7 @@ selected_clients = st.multiselect(
     max_selections=4,
     key="client_selection"
 )
+selected_clients = normalize_id_list(selected_clients)
 
 if len(selected_clients) < 2:
     st.warning("Veuillez sélectionner au moins deux clients pour la comparaison.")
@@ -112,17 +134,24 @@ reference_client = st.selectbox(
     options=selected_clients,
     format_func=lambda x: f"Client #{x}"
 )
+try:
+    reference_client = int(reference_client)
+except Exception:
+    pass
 
 # Chargement des données des clients sélectionnés
 with st.spinner("Chargement des données des clients sélectionnés..."):
     client_data = {}
     for client_id in selected_clients:
-        prediction = get_client_prediction(client_id)
-        details = get_client_details(client_id)
-        if prediction and details:
-            client_data[int(client_id)] = {"prediction": prediction, "details": details}
-        else:
-            st.error(f"Impossible de charger les données pour le client {client_id}.")
+        try:
+            pred = get_client_prediction(client_id)
+            det = get_client_details(client_id)
+            if pred and det:
+                client_data[int(client_id)] = {"prediction": pred, "details": det}
+            else:
+                st.error(f"Impossible de charger les données pour le client {client_id}.")
+        except Exception:
+            st.error(f"Erreur lors du chargement du client {client_id}.")
 
 if not client_data:
     st.error("Aucune donnée client n'a pu être chargée.")
@@ -136,7 +165,7 @@ for i, (client_id, data) in enumerate(client_data.items()):
     probability = prediction.get("probability", 0)
     decision = prediction.get("decision", "INCONNU")
     with cols[i]:
-        status_color = COLORBLIND_FRIENDLY_PALETTE['accepted'] if decision == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE['refused']
+        status_color = COLORBLIND_FRIENDLY_PALETTE.get('accepted', '#2ca02c') if decision == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE.get('refused', '#d62728')
         status_icon = "✅" if decision == "ACCEPTÉ" else "❌"
         st.markdown(
             f"""
@@ -177,7 +206,7 @@ st.dataframe(
         "Genre": st.column_config.TextColumn("Genre"),
         "Éducation": st.column_config.TextColumn("Éducation"),
         "Statut familial": st.column_config.TextColumn("Statut familial"),
-        "Revenu annuel": st.column_config.NumberColumn("Revenu annuel", format=f"%d {UI_CONFIG.get('currency_symbol','')}" ),
+        "Revenu annuel": st.column_config.NumberColumn("Revenu annuel", format=f"%d {UI_CONFIG.get('currency_symbol','')}"),
         "Ancienneté d'emploi": st.column_config.NumberColumn("Ancienneté d'emploi", format="%d ans")
     },
     hide_index=True,
@@ -222,102 +251,100 @@ st.dataframe(
 # -----------------------------
 st.subheader("Analyse univariée : distribution des probabilités de défaut")
 
-# Récupérer la distribution des probabilités pour l'ensemble des clients disponibles
-all_client_ids = get_available_clients(limit=UI_CONFIG.get("default_limit", 100))
+all_client_ids = normalize_id_list(get_available_clients(limit=UI_CONFIG.get("default_limit", 100)) or [])
 probs = []
 ids_with_prob = []
 with st.spinner("Récupération des probabilités pour la distribution..."):
     for cid in all_client_ids:
-        pred = get_client_prediction(cid)
-        if pred:
-            probs.append(pred.get("probability", 0))
-            ids_with_prob.append((cid, pred.get("probability", 0)))
+        try:
+            pred = get_client_prediction(cid)
+            if pred:
+                prob = pred.get("probability", 0)
+                probs.append(prob)
+                ids_with_prob.append((cid, prob))
+        except Exception:
+            continue
 
 if not probs:
     st.info("Aucune probabilité disponible pour l'instant.")
 else:
     dist_df = pd.DataFrame({"client_id": [c for c, p in ids_with_prob], "probability": [p for c, p in ids_with_prob]})
-    # Histogramme
     fig = px.histogram(
         dist_df, x="probability", nbins=30,
         title="Distribution des probabilités de défaut (ensemble des clients)",
-        color_discrete_sequence=[COLORBLIND_FRIENDLY_PALETTE.get("primary", "#333333")]
+        color_discrete_sequence=[COLORBLIND_FRIENDLY_PALETTE.get("primary", "#636EFA")]
     )
     fig.update_layout(xaxis=dict(tickformat=".0%", title="Probabilité de défaut"), yaxis_title="Nombre de clients", height=350)
-    # Position du client de référence
-    ref_pred = client_data[int(reference_client)]["prediction"]
-    ref_prob = ref_pred.get("probability", 0)
-    # Ajouter une ligne verticale pour le client de référence
-    fig.add_vline(x=ref_prob, line_dash="dash", line_color="black", annotation_text=f"Réf #{reference_client}: {ref_prob:.1%}", annotation_position="top right")
+    try:
+        ref_pred = client_data[int(reference_client)]["prediction"]
+        ref_prob = ref_pred.get("probability", 0)
+        fig.add_vline(x=ref_prob, line_dash="dash", line_color="black", annotation_text=f"Réf #{reference_client}: {ref_prob:.1%}", annotation_position="top right")
+    except Exception:
+        ref_prob = None
     st.plotly_chart(fig, use_container_width=True)
 
-    # Calcul du quantile / percentile (plus bas = plus "safe")
-    percentile = (np.sum(np.array(probs) <= ref_prob) / len(probs)) * 100
-    percentile_text = f"Le client #{reference_client} se situe au {percentile:.1f}e percentile (où 0% = le plus sûr, 100% = le moins sûr)."
-    st.markdown(f"**Interprétation rapide :** {percentile_text}")
-    if percentile <= 25:
-        st.success(f"Le client #{reference_client} se situe dans les 25% les plus sûrs.")
-    elif percentile <= 50:
-        st.info(f"Le client #{reference_client} se situe dans le 25-50% (risque relativement faible).")
-    elif percentile <= 75:
-        st.warning(f"Le client #{reference_client} se situe dans le 50-75% (risque modéré).")
-    else:
-        st.error(f"Le client #{reference_client} se situe dans les 25% les moins sûrs.")
+    if ref_prob is not None:
+        percentile = (np.sum(np.array(probs) <= ref_prob) / len(probs)) * 100
+        percentile_text = f"Le client #{reference_client} se situe au {percentile:.1f}e percentile (où 0% = le plus sûr, 100% = le moins sûr)."
+        st.markdown(f"**Interprétation rapide :** {percentile_text}")
+        if percentile <= 25:
+            st.success(f"Le client #{reference_client} se situe dans les 25% les plus sûrs.")
+        elif percentile <= 50:
+            st.info(f"Le client #{reference_client} se situe dans le 25-50% (risque relativement faible).")
+        elif percentile <= 75:
+            st.warning(f"Le client #{reference_client} se situe dans le 50-75% (risque modéré).")
+        else:
+            st.error(f"Le client #{reference_client} se situe dans les 25% les moins sûrs.")
 
 # -----------------------------
 # Analyse bivariée (scatter plot) — nouvelle version complète
 # -----------------------------
 st.subheader("Analyse bivariée : comparer deux caractéristiques (100 clients, 9 features prioritaires)")
 
-# PRIOR_FEATURES -> 9 features importantes
 PRIOR_FEATURES = [
     "EXT_SOURCE_3", "EXT_SOURCE_2", "EXT_SOURCE_1",
     "AMT_GOODS_PRICE", "AMT_CREDIT", "DAYS_EMPLOYED",
     "NAME_EDUCATION_TYPE", "AMT_ANNUITY", "DAYS_BIRTH"
 ]
 
-# Récupérer les 100 premiers IDs pour l'analyse globale (ou fallback sur available_clients)
+# Récupérer 100 premiers clients pour l'analyse globale
 limit_for_bi = 100
-all_client_ids_100 = get_available_clients(limit=limit_for_bi) or available_clients[:limit_for_bi]
+all_client_ids_100 = normalize_id_list(get_available_clients(limit=limit_for_bi) or [])[:limit_for_bi]
+if not all_client_ids_100:
+    # fallback rapide
+    all_client_ids_100 = available_clients[:limit_for_bi]
 
 if not all_client_ids_100:
     st.info("Impossible de récupérer la liste des 100 clients pour l'analyse bivariée.")
 else:
-    # Déterminer quelles prior_features sont présentes dans l'échantillon
-    present_prior = set()
-    # On collecte un petit échantillon de détails pour décider disponibilité et types
-    sample_details = {}
-    with st.spinner("Vérification de la disponibilité des features sur l'échantillon..."):
+    # construire un échantillon: récupère details et predictions une fois
+    sample_rows = {}
+    with st.spinner("Chargement des détails/predictions pour l'échantillon (100 clients)..."):
         for cid in all_client_ids_100:
             try:
                 d = get_client_details(cid)
-                if d and "features" in d:
-                    sample_details[int(cid)] = d["features"]
-                    for f in PRIOR_FEATURES:
-                        if f in d["features"]:
-                            present_prior.add(f)
+                p = get_client_prediction(cid)
+                if d and "features" in d and p:
+                    sample_rows[int(cid)] = {"features": d["features"], "prediction": p}
             except Exception:
                 continue
-            if len(present_prior) == len(PRIOR_FEATURES):
-                break
 
-    present_prior = [f for f in PRIOR_FEATURES if f in present_prior]
+    # Déterminer les features prior disponibles
+    present_prior = [f for f in PRIOR_FEATURES if any(f in v["features"] for v in sample_rows.values())]
 
     if not present_prior:
         st.info("Aucune des 9 features prioritaires n'est disponible dans l'échantillon.")
     else:
-        st.markdown("Pour cohérence, vous ne pouvez choisir que parmi les 9 features prioritaires. Les transformations permettent de comparer des variables d'échelles différentes.")
+        st.markdown("Sélection limitée aux 9 features importantes pour garantir une comparaison pertinente.")
 
-        # Heuristique pour déterminer si une feature est numérique sur l'échantillon
-        def is_numeric_on_sample(feat, samples):
+        # Heuristique: numérique vs catégorielle
+        def is_numeric_feat(feat, sample_map, sample_limit=40):
             vals = []
-            for feats in samples.values():
-                v = feats.get(feat, None)
+            for feats in list(sample_map.values())[:sample_limit]:
+                v = feats["features"].get(feat, None)
                 if v is None:
                     continue
                 vals.append(v)
-                if len(vals) >= 30:
-                    break
             if not vals:
                 return False
             convertible = 0
@@ -329,61 +356,101 @@ else:
                     pass
             return (convertible / len(vals)) >= 0.8
 
-        numeric_prior = [f for f in present_prior if is_numeric_on_sample(f, sample_details)]
+        numeric_prior = [f for f in present_prior if is_numeric_feat(f, sample_rows)]
         categorical_prior = [f for f in present_prior if f not in numeric_prior]
 
-        # Options d'échelle / transformation
-        scale_option = st.selectbox(
-            "Transformation & scaling",
-            options=[
-                "Log1p puis Standard", "Standard (z-score)", "MinMax (0-1)", "Aucun (brut)"
-            ],
+        # UI pour scaling: Simple vs Avancé
+        mode_scaling = st.radio(
+            "Mode d'affichage des options de mise à l'échelle",
+            options=["Simple (recommandé pour chargés de relation)", "Avancé (options techniques)"],
             index=0,
-            help="Log1p puis Standard est recommandé si vous incluez des montants. Standard/MinMax permettent de comparer l'ordre de grandeur."
+            horizontal=True
         )
 
-        if not numeric_prior:
-            st.info("Aucune feature numérique parmi les 9 priorisées pour un scatter. Vous pouvez visualiser des boxplots pour catégorielles.")
+        if mode_scaling.startswith("Simple"):
+            friendly_choice = st.selectbox(
+                "Comparer les caractéristiques — choix rapide",
+                options=[
+                    "Auto (recommandé)", "Brut — valeurs réelles", "Compacter montants (AMT_*)"
+                ],
+                index=0
+            )
+            if friendly_choice == "Auto (recommandé)":
+                st.caption("Auto : l'application choisit une mise à l'échelle lisible selon les variables sélectionnées.")
+                scale_choice_internal = "auto"
+            elif friendly_choice == "Brut — valeurs réelles":
+                st.caption("Affiche les valeurs réelles sans transformation.")
+                scale_choice_internal = "none"
+            else:
+                st.caption("Compacter montants : applique une transformation adaptée aux montants pour rendre la lecture plus claire.")
+                scale_choice_internal = "money_compact"
         else:
-            # Sélecteurs pour X et Y parmi les numériques priorisés
+            scale_choice_internal = st.selectbox(
+                "Transformation & scaling (mode avancé)",
+                options=[
+                    "Log1p puis Standard", "Standard (z-score)", "MinMax (0-1)", "Aucun (brut)"
+                ],
+                index=0
+            )
+
+        # Fonctions de mapping entre choix utilisateur et méthode concrète
+        def resolve_internal_scaler(choice, x_feat=None, y_feat=None):
+            money_feats = {"AMT_GOODS_PRICE", "AMT_CREDIT", "AMT_ANNUITY"}
+            if choice == "none":
+                return "None"
+            if choice == "money_compact":
+                return "Log1p+Standard"
+            if choice == "auto":
+                if (x_feat in money_feats) or (y_feat in money_feats):
+                    return "Log1p+Standard"
+                else:
+                    return "Standard"
+            # options avancées
+            if choice == "Log1p puis Standard":
+                return "Log1p+Standard"
+            if choice == "Standard (z-score)":
+                return "Standard"
+            if choice == "MinMax (0-1)":
+                return "MinMax"
+            if choice == "Aucun (brut)":
+                return "None"
+            return "Standard"
+
+        # Sélection des axes (limités aux features numériques pour scatter)
+        if not numeric_prior:
+            st.info("Aucune feature numérique parmi les 9 priorisées pour un scatter. Essayez d'utiliser le mode boxplot pour catégories.")
+        else:
             col_x, col_y = st.columns(2)
             with col_x:
                 x_feature = st.selectbox("Axe X (numérique)", options=numeric_prior, index=0, format_func=lambda v: FEATURE_DESCRIPTIONS.get(v, v))
             with col_y:
-                y_opts = [f for f in numeric_prior if f != x_feature]
-                if not y_opts:
+                y_options = [f for f in numeric_prior if f != x_feature]
+                if not y_options:
                     st.info("Pas d'autre feature numérique à afficher sur l'axe Y.")
                     y_feature = None
                 else:
-                    y_feature = st.selectbox("Axe Y (numérique)", options=y_opts, index=0, format_func=lambda v: FEATURE_DESCRIPTIONS.get(v, v))
+                    y_feature = st.selectbox("Axe Y (numérique)", options=y_options, index=0, format_func=lambda v: FEATURE_DESCRIPTIONS.get(v, v))
 
             if x_feature and y_feature:
-                # Construire dataset sur les 100 clients
+                # Construction du dataset sur l'échantillon
                 rows = []
-                with st.spinner("Chargement des 100 clients et calcul des prédictions..."):
-                    for cid in all_client_ids_100:
-                        try:
-                            d = get_client_details(cid)
-                            p = get_client_prediction(cid)
-                            if not d or "features" not in d or not p:
-                                continue
-                            feats = d["features"]
-                            x_raw = feats.get(x_feature, None)
-                            y_raw = feats.get(y_feature, None)
-                            if x_raw is None or y_raw is None:
-                                continue
-                            prob = p.get("probability", 0)
-                            threshold = p.get("threshold", 0.5)
-                            decision = "ACCEPTÉ" if prob < threshold else "REFUSÉ"
-                            rows.append({
-                                "client_id": int(cid),
-                                "x_raw": x_raw,
-                                "y_raw": y_raw,
-                                "probability": prob,
-                                "decision": decision
-                            })
-                        except Exception:
-                            continue
+                for cid, rec in sample_rows.items():
+                    feats = rec["features"]
+                    p = rec["prediction"]
+                    x_raw = feats.get(x_feature, None)
+                    y_raw = feats.get(y_feature, None)
+                    if x_raw is None or y_raw is None:
+                        continue
+                    prob = p.get("probability", 0)
+                    threshold = p.get("threshold", 0.5)
+                    decision = "ACCEPTÉ" if prob < threshold else "REFUSÉ"
+                    rows.append({
+                        "client_id": int(cid),
+                        "x_raw": x_raw,
+                        "y_raw": y_raw,
+                        "probability": prob,
+                        "decision": decision
+                    })
 
                 if not rows:
                     st.info("Pas assez de données pour tracer le scatter.")
@@ -393,31 +460,31 @@ else:
                     df_all["y_num"] = pd.to_numeric(df_all["y_raw"], errors="coerce")
                     df_all = df_all.dropna(subset=["x_num", "y_num"]).reset_index(drop=True)
 
-                    # fonctions de transformation
+                    # transformation log safe
                     def safe_log1p_series(s):
                         s = pd.to_numeric(s, errors="coerce")
-                        # log1p only for positive values, keep non-positive as-is
                         out = s.copy()
                         mask_pos = s > 0
                         out.loc[mask_pos] = np.log1p(s.loc[mask_pos])
                         return out
 
-                    # Appliquer transformation & scaling choisie (fit sur l'ensemble df_all)
-                    if scale_option == "Aucun (brut)":
+                    concrete_method = resolve_internal_scaler(scale_choice_internal, x_feature, y_feature)
+
+                    if concrete_method == "None":
                         df_all["x_plot"] = df_all["x_num"]
                         df_all["y_plot"] = df_all["y_num"]
+                        scaler_x = scaler_y = None
                         x_label = FEATURE_DESCRIPTIONS.get(x_feature, x_feature)
                         y_label = FEATURE_DESCRIPTIONS.get(y_feature, y_feature)
-                        scaler_x = scaler_y = None
                     else:
-                        if scale_option == "Log1p puis Standard":
+                        if concrete_method == "Log1p+Standard":
                             x_vals = safe_log1p_series(df_all["x_num"]).values.reshape(-1, 1)
                             y_vals = safe_log1p_series(df_all["y_num"]).values.reshape(-1, 1)
                         else:
                             x_vals = df_all["x_num"].values.reshape(-1, 1)
                             y_vals = df_all["y_num"].values.reshape(-1, 1)
 
-                        if scale_option == "MinMax (0-1)":
+                        if concrete_method == "MinMax":
                             scaler_x = MinMaxScaler()
                             scaler_y = MinMaxScaler()
                         else:
@@ -426,23 +493,22 @@ else:
 
                         df_all["x_plot"] = scaler_x.fit_transform(x_vals).flatten()
                         df_all["y_plot"] = scaler_y.fit_transform(y_vals).flatten()
-                        x_label = f"{FEATURE_DESCRIPTIONS.get(x_feature, x_feature)} ({scale_option})"
-                        y_label = f"{FEATURE_DESCRIPTIONS.get(y_feature, y_feature)} ({scale_option})"
+                        x_label = f"{FEATURE_DESCRIPTIONS.get(x_feature, x_feature)} ({concrete_method})"
+                        y_label = f"{FEATURE_DESCRIPTIONS.get(y_feature, y_feature)} ({concrete_method})"
 
-                    # Indiquer les clients choisis pour la comparaison et la référence
-                    # selected_clients peut contenir ints or strings - normaliser
+                    # Indiquer clients sélectionnés et référence
                     selected_set = set([int(x) for x in selected_clients])
                     df_all["is_selected"] = df_all["client_id"].isin(selected_set)
                     df_all["is_reference"] = df_all["client_id"] == int(reference_client)
 
-                    # Construire figure: trois traces (autres, sélectionnés, référence)
+                    # Construire la figure
                     fig_bi = go.Figure()
 
                     df_other = df_all[~df_all["is_selected"] & ~df_all["is_reference"]]
                     df_sel = df_all[df_all["is_selected"] & ~df_all["is_reference"]]
                     df_ref = df_all[df_all["is_reference"]]
 
-                    # Trace : autres clients
+                    # Autres clients
                     if not df_other.empty:
                         fig_bi.add_trace(go.Scatter(
                             x=df_other["x_plot"],
@@ -465,7 +531,7 @@ else:
                             showlegend=True
                         ))
 
-                    # Trace : clients sélectionnés
+                    # Clients sélectionnés
                     if not df_sel.empty:
                         fig_bi.add_trace(go.Scatter(
                             x=df_sel["x_plot"],
@@ -475,7 +541,7 @@ else:
                                 size=14,
                                 symbol="diamond",
                                 color=[COLORBLIND_FRIENDLY_PALETTE.get('accepted','#2ca02c') if d == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE.get('refused','#d62728') for d in df_sel["decision"]],
-                                line=dict(width=1.0, color='black')
+                                line=dict(width=1, color='black')
                             ),
                             text=[f"#{int(c)}" for c in df_sel["client_id"]],
                             textposition="top center",
@@ -490,9 +556,8 @@ else:
                             showlegend=True
                         ))
 
-                    # Trace : client de référence (star)
+                    # Client référence
                     if not df_ref.empty:
-                        # could be multiple rows if same id repeated; keep first
                         r = df_ref.iloc[0]
                         fig_bi.add_trace(go.Scatter(
                             x=[r["x_plot"]],
@@ -520,8 +585,43 @@ else:
                         legend=dict(itemsizing='constant')
                     )
 
-                    # Option: afficher percentile de la référence (sur la probabilité dans l'échantillon)
-                    if st.checkbox("Afficher percentile de la référence sur la probabilité (échantillon affiché)", value=False):
+                    # Options droites (trendline, identity)
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        show_trend = st.checkbox("Afficher droite de tendance (régression linéaire)", value=False)
+                    with col_b:
+                        show_identity = st.checkbox("Afficher ligne y = x (identité)", value=False)
+
+                    if show_trend:
+                        if len(df_all) < 2:
+                            st.warning("Pas assez de points pour calculer une régression.")
+                        else:
+                            try:
+                                coeffs = np.polyfit(df_all["x_plot"], df_all["y_plot"], 1)
+                                x_line = np.linspace(df_all["x_plot"].min(), df_all["x_plot"].max(), 200)
+                                y_line = np.polyval(coeffs, x_line)
+                                fig_bi.add_trace(go.Scatter(
+                                    x=x_line, y=y_line, mode="lines",
+                                    line=dict(color="black", dash="dash"),
+                                    name="Droite de tendance"
+                                ))
+                            except Exception as e:
+                                st.warning(f"Impossible de tracer la droite de tendance : {e}")
+
+                    if show_identity:
+                        try:
+                            x0, x1 = df_all["x_plot"].min(), df_all["x_plot"].max()
+                            fig_bi.add_trace(go.Scatter(
+                                x=[x0, x1], y=[x0, x1],
+                                mode="lines",
+                                line=dict(color="gray", dash="dot"),
+                                name="y = x"
+                            ))
+                        except Exception:
+                            pass
+
+                    # Option percentile référence
+                    if st.checkbox("Afficher percentile de la référence sur la probabilité (échantillon)", value=False):
                         if not df_all.empty and int(reference_client) in df_all["client_id"].values:
                             ref_prob_val = df_all.loc[df_all["client_id"] == int(reference_client), "probability"].values[0]
                             percentile_ref = (np.sum(df_all["probability"] <= ref_prob_val) / len(df_all)) * 100
@@ -529,53 +629,50 @@ else:
 
                     st.plotly_chart(fig_bi, use_container_width=True)
 
-                    # Aide: si l'une des features est catégorielle, proposer un boxplot/strip en alternative
+                    # Boxplot alternatif si catégorielle vs numérique
                     if categorical_prior:
-                        if st.checkbox("Afficher boxplot alternatif si catégorie vs numérique ?", value=False):
-                            # si une des deux features apparait dans categorical_prior, faire boxplot de y vs category (ou x vs category)
+                        if st.checkbox("Afficher boxplot alternatif si catégorielle vs numérique ?", value=False):
+                            by_cat = None
+                            num = None
                             if x_feature in categorical_prior and y_feature not in categorical_prior:
-                                by_cat = x_feature
-                                num = y_feature
+                                by_cat = x_feature; num = y_feature
                             elif y_feature in categorical_prior and x_feature not in categorical_prior:
-                                by_cat = y_feature
-                                num = x_feature
-                            else:
-                                by_cat = None
-                                num = None
+                                by_cat = y_feature; num = x_feature
 
-                            if by_cat is not None:
-                                # construire df avec catégorie text
+                            if by_cat and num:
                                 cat_rows = []
-                                for cid in all_client_ids_100:
+                                for cid, rec in sample_rows.items():
+                                    feats = rec["features"]
+                                    p = rec["prediction"]
+                                    cat_val = feats.get(by_cat, None)
+                                    num_val = feats.get(num, None)
+                                    if cat_val is None or num_val is None:
+                                        continue
                                     try:
-                                        d = get_client_details(cid)
-                                        p = get_client_prediction(cid)
-                                        if not d or "features" not in d or not p:
-                                            continue
-                                        feats = d["features"]
-                                        cat_val = feats.get(by_cat, None)
-                                        num_val = feats.get(num, None)
-                                        if cat_val is None or num_val is None:
-                                            continue
-                                        prob = p.get("probability", 0)
-                                        cat_rows.append({"client_id": int(cid), "category": str(cat_val), "value": float(num_val), "probability": prob})
+                                        cat_rows.append({
+                                            "client_id": int(cid),
+                                            "category": str(cat_val),
+                                            "value": float(num_val),
+                                            "probability": p.get("probability", 0)
+                                        })
                                     except Exception:
                                         continue
                                 if cat_rows:
                                     df_cat = pd.DataFrame(cat_rows)
-                                    fig_box = px.box(df_cat, x="category", y="value", points="all", color_discrete_sequence=[COLORBLIND_FRIENDLY_PALETTE.get("primary","#636EFA")])
-                                    fig_box.update_layout(title=f"Boxplot: {FEATURE_DESCRIPTIONS.get(num,num)} par {FEATURE_DESCRIPTIONS.get(by_cat,by_cat)}", xaxis_title=FEATURE_DESCRIPTIONS.get(by_cat,by_cat), yaxis_title=FEATURE_DESCRIPTIONS.get(num,num), height=500)
+                                    fig_box = px.box(df_cat, x="category", y="value", points="all",
+                                                     title=f"Boxplot: {FEATURE_DESCRIPTIONS.get(num,num)} par {FEATURE_DESCRIPTIONS.get(by_cat, by_cat)}",
+                                                     labels={"category": FEATURE_DESCRIPTIONS.get(by_cat,by_cat), "value": FEATURE_DESCRIPTIONS.get(num,num)},
+                                                     color_discrete_sequence=[COLORBLIND_FRIENDLY_PALETTE.get("primary","#636EFA")])
                                     st.plotly_chart(fig_box, use_container_width=True)
                                 else:
                                     st.info("Pas assez de données pour le boxplot alternatif.")
                             else:
-                                st.info("Les deux features sont numériques (ou les deux catégorielles). Le boxplot alternatif nécessite une feature catégorielle et une numérique.")
+                                st.info("Le boxplot alternatif nécessite une feature catégorielle et une numérique.")
 
 # -----------------------------
 # Explications des caractéristiques sélectionnées
 # -----------------------------
 if st.button("Explication des caractéristiques sélectionnées", key="exp_feat"):
-    # afficher description pour x_feature et y_feature si définis
     for f in [locals().get("x_feature"), locals().get("y_feature")]:
         if f:
             if f in FEATURE_DESCRIPTIONS:
@@ -584,7 +681,7 @@ if st.button("Explication des caractéristiques sélectionnées", key="exp_feat"
                 st.markdown(f"**{f}**: Pas de description disponible")
 
 # -----------------------------
-# Comparaison probabilités (déjà présent)
+# Comparaison probabilités (bar chart)
 # -----------------------------
 st.subheader("Comparaison des risques de défaut")
 threshold = client_data[list(client_data.keys())[0]]["prediction"].get("threshold", 0.5)
