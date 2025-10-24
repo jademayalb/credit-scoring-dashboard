@@ -169,35 +169,33 @@ if mode == "Client existant" and selected_client is not None:
 
 values = {f: prefill.get(f, defaults.get(f)) for f in SIM_FEATURES}
 
-# ---------- Form to edit features ----------
+# ---------- Widgets to edit features (SANS FORMULAIRE) ----------
 st.markdown("### Valeurs des caractéristiques (édition)")
-with st.form(key="sim_form", clear_on_submit=False):
-    input_cols = st.columns(2)
-    widgets = {}
-    for i, feat in enumerate(SIM_FEATURES):
-        col = input_cols[i % 2]
-        label = f"{feat} — {FEATURE_DESCRIPTIONS.get(feat, '')}"
-        if feat in {"AMT_CREDIT", "AMT_GOODS_PRICE", "AMT_ANNUITY"}:
-            widgets[feat] = col.number_input(label, value=float(values.get(feat, 0.0) or 0.0),
-                                             min_value=0.0, format="%.2f", step=100.0,
-                                             help=FEATURE_DESCRIPTIONS.get(feat, ""))
-        elif feat == "DAYS_BIRTH":
-            widgets[feat] = col.number_input(label, value=float(values.get(feat, 35.0) or 35.0),
-                                             min_value=16.0, max_value=120.0, format="%.1f",
-                                             help="Saisir l'âge en années (valeur positive).")
-        elif feat.startswith("EXT_SOURCE"):
-            widgets[feat] = col.number_input(label, value=float(values.get(feat, 0.5) or 0.5),
-                                             min_value=0.0, max_value=1.0, step=0.01, format="%.3f",
-                                             help=FEATURE_DESCRIPTIONS.get(feat, ""))
-        else:
-            widgets[feat] = col.text_input(label, value=str(values.get(feat, "")),
-                                           help=FEATURE_DESCRIPTIONS.get(feat, ""))
 
-    apply_button = st.form_submit_button("Appliquer valeurs saisies")
+input_cols = st.columns(2)
+widgets = {}
+for i, feat in enumerate(SIM_FEATURES):
+    col = input_cols[i % 2]
+    label = f"{feat} — {FEATURE_DESCRIPTIONS.get(feat, '')}"
+    if feat in {"AMT_CREDIT", "AMT_GOODS_PRICE", "AMT_ANNUITY"}:
+        widgets[feat] = col.number_input(label, value=float(values.get(feat, 0.0) or 0.0),
+                                         min_value=0.0, format="%.2f", step=100.0,
+                                         help=FEATURE_DESCRIPTIONS.get(feat, ""))
+    elif feat == "DAYS_BIRTH":
+        widgets[feat] = col.number_input(label, value=float(values.get(feat, 35.0) or 35.0),
+                                         min_value=16.0, max_value=120.0, format="%.1f",
+                                         help="Saisir l'âge en années (valeur positive).")
+    elif feat.startswith("EXT_SOURCE"):
+        widgets[feat] = col.number_input(label, value=float(values.get(feat, 0.5) or 0.5),
+                                         min_value=0.0, max_value=1.0, step=0.01, format="%.3f",
+                                         help=FEATURE_DESCRIPTIONS.get(feat, ""))
+    else:
+        widgets[feat] = col.text_input(label, value=str(values.get(feat, "")),
+                                       help=FEATURE_DESCRIPTIONS.get(feat, ""))
 
-if apply_button:
-    for f in SIM_FEATURES:
-        values[f] = widgets.get(f)
+# ✅ CORRECTION : Toujours utiliser les valeurs actuelles des widgets
+for f in SIM_FEATURES:
+    values[f] = widgets.get(f)
 
 # ---------- Action : obtenir score rafraîchi ----------
 st.markdown("---")
