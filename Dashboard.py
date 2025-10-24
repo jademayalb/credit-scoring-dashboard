@@ -1,9 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-# Retirez ces lignes qui causent l'erreur :
-# from utils.data_processing import process_credit_data
-# from utils.model_utils import load_model, make_prediction
 
 def main():
     st.title("🏦 Credit Scoring Dashboard")
