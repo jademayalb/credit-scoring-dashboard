@@ -1,20 +1,12 @@
-"""
-Page de simulation : modifier/entrer un profil client et obtenir un score rafraîchi.
-
-Modifications importantes (par rapport à la version précédente) :
-- Affiche la prédiction "avant" (si client existant) et la prédiction "après" (résultat de la simulation)
-  côte à côte pour faciliter la comparaison.
-- Affiche les erreurs/retours détaillés de l'appel API pour diagnostiquer pourquoi rien ne se passe.
-- Affiche le payload envoyé quand l'option debug est cochée.
-- Comportement défensif et messages explicites si l'API ne renvoie rien.
-- Conserve accessibilité et champs éditables restreints.
-"""
+# (fichier complet, identique au tien sauf la section d'appel API modifiée pour utiliser simulate_prediction)
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from typing import Dict, Any
 
+# Importer simulate_prediction (utilise POST et fallback)
+from utils.simulation_client import simulate_prediction
 from utils.api_client import get_client_prediction, get_client_details, get_available_clients
 from config import FEATURE_DESCRIPTIONS, COLORBLIND_FRIENDLY_PALETTE, UI_CONFIG
 
@@ -242,21 +234,24 @@ if compute:
 
     with st.spinner("Appel de l'API de scoring..."):
         try:
-            # Try preferred signature: get_client_prediction(client_id, features=...)
+            # === UTILISER simulate_prediction (POST) pour la simulation ===
             if mode == "Client existant" and selected_client is not None:
-                try:
-                    prediction_result = get_client_prediction(int(selected_client), features=payload_features)
-                except TypeError:
-                    # fallbacks: try other calling styles
-                    try:
-                        prediction_result = get_client_prediction({"client_id": int(selected_client), "features": payload_features})
-                    except Exception:
-                        prediction_result = get_client_prediction(payload_features)
+                # simulate_prediction enverra un POST vers /predict/<client_id> puis /predict si nécessaire
+                prediction_result = simulate_prediction(client_id=int(selected_client), features=payload_features)
             else:
+                prediction_result = simulate_prediction(features=payload_features)
+
+            # normalize_response de simulate_prediction renvoie déjà la structure attendue par l'UI
+            if prediction_result is None:
+                # si la simulation a renvoyé None, essayer d'appeler l'ancien get_client_prediction en dernier recours
                 try:
-                    prediction_result = get_client_prediction(features=payload_features)
-                except TypeError:
-                    prediction_result = get_client_prediction(payload_features)
+                    if mode == "Client existant" and selected_client is not None:
+                        prediction_result = get_client_prediction(int(selected_client))
+                    else:
+                        prediction_result = None
+                except Exception:
+                    prediction_result = None
+
         except Exception as e:
             api_exception = e
             prediction_result = None
