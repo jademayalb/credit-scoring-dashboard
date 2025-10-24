@@ -381,14 +381,13 @@ else:
 # ---------- Analyse bivariée (section intégrée) ----------
 st.subheader("Analyse bivariée : comparer deux caractéristiques pertinentes")
 
-# ✅ NOUVELLES PAIRES MÉTIER corrigées et plus pertinentes (axes corrigés, sans scores externes flous)
+# ✅ PAIRES MÉTIER corrigées et plus pertinentes (SANS la paire éducation vs crédit)
 PAIRS = [
     {"key": "employed_vs_age", "x": "DAYS_EMPLOYED", "y": "DAYS_BIRTH", "label": "Ancienneté d'emploi vs Âge", "type": "employment_vs_age"},
     {"key": "credit_vs_price", "x": "AMT_CREDIT", "y": "AMT_GOODS_PRICE", "label": "Montant crédit vs Prix du bien", "type": "money_vs_money"},
     {"key": "income_vs_annuity", "x": "AMT_INCOME_TOTAL", "y": "AMT_ANNUITY", "label": "Revenus annuels vs Mensualité", "type": "income_vs_payment"},
     {"key": "age_vs_credit", "x": "DAYS_BIRTH", "y": "AMT_CREDIT", "label": "Âge vs Montant crédit", "type": "age_vs_money"},
-    {"key": "income_vs_credit", "x": "AMT_INCOME_TOTAL", "y": "AMT_CREDIT", "label": "Revenus vs Montant crédit", "type": "money_vs_money"},
-    {"key": "education_vs_credit", "x": "NAME_EDUCATION_TYPE", "y": "AMT_CREDIT", "label": "Niveau d'éducation vs Montant crédit", "type": "cat_vs_score"}
+    {"key": "income_vs_credit", "x": "AMT_INCOME_TOTAL", "y": "AMT_CREDIT", "label": "Revenus vs Montant crédit", "type": "money_vs_money"}
 ]
 pair_map = {p["key"]: p for p in PAIRS}
 pair_labels = {p["key"]: p["label"] for p in PAIRS}
@@ -430,143 +429,75 @@ if not rows:
 else:
     df = pd.DataFrame(rows)
 
-    # si catégorie vs score => boxplot + résumé adapté (regroupement des petites catégories)
-    if pair_type == "cat_vs_score":
-        # préparations
-        df["category"] = df["x_raw"].astype(str).fillna("Inconnu")
-        df["value"] = pd.to_numeric(df["y_raw"], errors="coerce")
-        df = df.dropna(subset=["value"]).copy()
+    df_prep, x_label, y_label = backend_prepare_plot(df, x_feature, y_feature)
 
-        if df.empty:
-            st.info("Pas assez de données numériques pour le boxplot.")
-        else:
-            # effectifs par catégorie
-            counts = df["category"].value_counts(dropna=False).rename_axis("category").reset_index(name="n")
-            total = counts["n"].sum()
-            counts["pct"] = counts["n"] / total
+    # marquer sélection/référence
+    sel_set = set(selected_clients)
+    df_prep["is_selected"] = df_prep["client_id"].isin(sel_set)
+    df_prep["is_reference"] = df_prep["client_id"] == int(reference_client)
 
-            # seuils métier : regrouper catégories trop petites
-            MIN_COUNT = 5         # au moins 5 clients
-            MIN_PCT = 0.03        # ou 3% minimum
-            rare_cats = counts[(counts["n"] < MIN_COUNT) | (counts["pct"] < MIN_PCT)]["category"].tolist()
+    df_other = df_prep[~df_prep["is_selected"] & ~df_prep["is_reference"]]
+    df_sel = df_prep[df_prep["is_selected"] & ~df_prep["is_reference"]]
+    df_ref = df_prep[df_prep["is_reference"]]
 
-            if rare_cats:
-                df["category_grouped"] = df["category"].apply(lambda c: "Autre" if c in rare_cats else c)
-            else:
-                df["category_grouped"] = df["category"]
+    fig = go.Figure()
+    if not df_other.empty:
+        fig.add_trace(go.Scatter(
+            x=df_other["x_plot"], y=df_other["y_plot"], mode="markers",
+            marker=dict(size=8, symbol="circle",
+                        color=[COLORBLIND_FRIENDLY_PALETTE.get('accepted','#2ca02c') if d == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE.get('refused','#d62728') for d in df_other["decision"]],
+                        opacity=0.8),
+            customdata=np.stack([df_other["client_id"], df_other.get("x_display", df_other["x_raw"]), df_other.get("y_display", df_other["y_raw"]), df_other["probability"]], axis=-1),
+            hovertemplate=("Client #%{customdata[0]}<br>" + f"{x_label}: " + "%{customdata[1]}<br>" + f"{y_label}: " + "%{customdata[2]}<br>Probabilité: %{customdata[3]:.1%}<extra></extra>"),
+            name="Autres clients"
+        ))
+    if not df_sel.empty:
+        fig.add_trace(go.Scatter(
+            x=df_sel["x_plot"], y=df_sel["y_plot"], mode="markers+text",
+            marker=dict(size=13, symbol="diamond", line=dict(width=1, color="black"),
+                        color=[COLORBLIND_FRIENDLY_PALETTE.get('accepted','#2ca02c') if d == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE.get('refused','#d62728') for d in df_sel["decision"]]),
+            text=[f"#{int(c)}" for c in df_sel["client_id"]],
+            textposition="top center",
+            customdata=np.stack([df_sel["client_id"], df_sel.get("x_display", df_sel["x_raw"]), df_sel.get("y_display", df_sel["y_raw"]), df_sel["probability"]], axis=-1),
+            hovertemplate=("Client #%{customdata[0]}<br>" + f"{x_label}: " + "%{customdata[1]}<br>" + f"{y_label}: " + "%{customdata[2]}<br>Probabilité: %{customdata[3]:.1%}<extra></extra>"),
+            name="Clients sélectionnés"
+        ))
+    if not df_ref.empty:
+        r = df_ref.iloc[0]
+        fig.add_trace(go.Scatter(
+            x=[r["x_plot"]], y=[r["y_plot"]], mode="markers+text",
+            marker=dict(size=20, symbol="star", color="black", line=dict(width=2, color='white')),
+            text=[f"Réf #{int(r['client_id'])}"], textposition="bottom center",
+            hovertemplate=(f"Client #{int(r['client_id'])}<br>{x_label}: {r.get('x_display', r['x_raw'])}<br>{y_label}: {r.get('y_display', r['y_raw'])}<br>Probabilité: {r['probability']:.1%}<extra></extra>"),
+            name="Client référence"
+        ))
 
-            # résumé par catégorie groupée
-            summary = df.groupby("category_grouped")["value"].agg(
-                n="count", median=lambda s: s.median(), q1=lambda s: s.quantile(0.25), q3=lambda s: s.quantile(0.75)
-            ).reset_index()
-            summary = summary.sort_values("median", ascending=False)
-            ordered_cats = summary["category_grouped"].tolist()
-            df["category_grouped"] = pd.Categorical(df["category_grouped"], categories=ordered_cats, ordered=True)
+    fig.update_layout(title=pair_labels[choice_key], xaxis_title=x_label, yaxis_title=y_label, template="simple_white", height=600)
 
-            # afficher tableau d'effectifs et avertissement si petits effectifs
-            st.markdown("Effectifs par catégorie (les petites catégories sont regroupées en 'Autre') :")
-            summary_disp = summary[["category_grouped", "n"]].rename(columns={"category_grouped": "Catégorie", "n": "Effectif"})
-            summary_disp = sanitize_df_for_streamlit(summary_disp)
-            st.dataframe(summary_disp, width='stretch')
+    # Option simple : montrer une droite de tendance purement visuelle
+    if st.checkbox("Afficher droite de tendance (aide visuelle)", value=False):
+        try:
+            lr = LinearRegression().fit(df_prep[["x_plot"]], df_prep["y_plot"])
+            x_line = np.linspace(df_prep["x_plot"].min(), df_prep["x_plot"].max(), 200)
+            y_line = lr.predict(x_line.reshape(-1,1)).flatten()
+            fig.add_trace(go.Scatter(x=x_line, y=y_line, mode="lines", line=dict(color="black", dash="dash"), name="Tendance"))
+        except Exception:
+            st.info("Impossible de tracer la droite de tendance sur ces données.")
 
-            small_groups = summary[summary["n"] < MIN_COUNT]
-            if not small_groups.empty:
-                st.info("Quelques catégories ont un effectif faible après regroupement. Interprète les différences avec prudence.")
+    st.plotly_chart(fig, width='stretch')
 
-            # boxplot ordonné par médiane
-            fig_box = px.box(df, x="category_grouped", y="value", points="all",
-                             labels={"category_grouped": FEATURE_DESCRIPTIONS.get(x_feature, x_feature),
-                                     "value": FEATURE_DESCRIPTIONS.get(y_feature, y_feature)},
-                             title=pair_labels[choice_key],
-                             color_discrete_sequence=[COLORBLIND_FRIENDLY_PALETTE.get("primary", "#636EFA")])
-            fig_box.update_layout(xaxis_title="Catégorie", yaxis_title="Montant crédit (roubles)")
-            st.plotly_chart(fig_box, width='stretch')
-
-            # barplot des effectifs
-            fig_counts = px.bar(summary, x="category_grouped", y="n",
-                                labels={"category_grouped": "Catégorie", "n": "Effectif"},
-                                title="Effectifs par catégorie (après regroupement)")
-            st.plotly_chart(fig_counts, width='stretch')
-
-            # indiquer la catégorie du client de référence si présente
-            try:
-                ref_cat = df.loc[df["client_id"] == reference_client, "category_grouped"].iloc[0]
-                st.info(f"Le client de référence appartient à la catégorie : **{ref_cat}**")
-            except Exception:
-                pass
-
-    else:
-        df_prep, x_label, y_label = backend_prepare_plot(df, x_feature, y_feature)
-
-        # marquer sélection/référence
-        sel_set = set(selected_clients)
-        df_prep["is_selected"] = df_prep["client_id"].isin(sel_set)
-        df_prep["is_reference"] = df_prep["client_id"] == int(reference_client)
-
-        df_other = df_prep[~df_prep["is_selected"] & ~df_prep["is_reference"]]
-        df_sel = df_prep[df_prep["is_selected"] & ~df_prep["is_reference"]]
-        df_ref = df_prep[df_prep["is_reference"]]
-
-        fig = go.Figure()
-        if not df_other.empty:
-            fig.add_trace(go.Scatter(
-                x=df_other["x_plot"], y=df_other["y_plot"], mode="markers",
-                marker=dict(size=8, symbol="circle",
-                            color=[COLORBLIND_FRIENDLY_PALETTE.get('accepted','#2ca02c') if d == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE.get('refused','#d62728') for d in df_other["decision"]],
-                            opacity=0.8),
-                customdata=np.stack([df_other["client_id"], df_other.get("x_display", df_other["x_raw"]), df_other.get("y_display", df_other["y_raw"]), df_other["probability"]], axis=-1),
-                hovertemplate=("Client #%{customdata[0]}<br>" + f"{x_label}: " + "%{customdata[1]}<br>" + f"{y_label}: " + "%{customdata[2]}<br>Probabilité: %{customdata[3]:.1%}<extra></extra>"),
-                name="Autres clients"
-            ))
-        if not df_sel.empty:
-            fig.add_trace(go.Scatter(
-                x=df_sel["x_plot"], y=df_sel["y_plot"], mode="markers+text",
-                marker=dict(size=13, symbol="diamond", line=dict(width=1, color="black"),
-                            color=[COLORBLIND_FRIENDLY_PALETTE.get('accepted','#2ca02c') if d == "ACCEPTÉ" else COLORBLIND_FRIENDLY_PALETTE.get('refused','#d62728') for d in df_sel["decision"]]),
-                text=[f"#{int(c)}" for c in df_sel["client_id"]],
-                textposition="top center",
-                customdata=np.stack([df_sel["client_id"], df_sel.get("x_display", df_sel["x_raw"]), df_sel.get("y_display", df_sel["y_raw"]), df_sel["probability"]], axis=-1),
-                hovertemplate=("Client #%{customdata[0]}<br>" + f"{x_label}: " + "%{customdata[1]}<br>" + f"{y_label}: " + "%{customdata[2]}<br>Probabilité: %{customdata[3]:.1%}<extra></extra>"),
-                name="Clients sélectionnés"
-            ))
-        if not df_ref.empty:
-            r = df_ref.iloc[0]
-            fig.add_trace(go.Scatter(
-                x=[r["x_plot"]], y=[r["y_plot"]], mode="markers+text",
-                marker=dict(size=20, symbol="star", color="black", line=dict(width=2, color='white')),
-                text=[f"Réf #{int(r['client_id'])}"], textposition="bottom center",
-                hovertemplate=(f"Client #{int(r['client_id'])}<br>{x_label}: {r.get('x_display', r['x_raw'])}<br>{y_label}: {r.get('y_display', r['y_raw'])}<br>Probabilité: {r['probability']:.1%}<extra></extra>"),
-                name="Client référence"
-            ))
-
-        fig.update_layout(title=pair_labels[choice_key], xaxis_title=x_label, yaxis_title=y_label, template="simple_white", height=600)
-
-        # Option simple : montrer une droite de tendance purement visuelle
-        if st.checkbox("Afficher droite de tendance (aide visuelle)", value=False):
-            try:
-                lr = LinearRegression().fit(df_prep[["x_plot"]], df_prep["y_plot"])
-                x_line = np.linspace(df_prep["x_plot"].min(), df_prep["x_plot"].max(), 200)
-                y_line = lr.predict(x_line.reshape(-1,1)).flatten()
-                fig.add_trace(go.Scatter(x=x_line, y=y_line, mode="lines", line=dict(color="black", dash="dash"), name="Tendance"))
-            except Exception:
-                st.info("Impossible de tracer la droite de tendance sur ces données.")
-
-        st.plotly_chart(fig, width='stretch')
-
-        # ✅ NOUVELLES interprétations métier plus pertinentes et axes corrigés
-        st.markdown("#### 💡 Interprétation métier")
-        if choice_key == "employed_vs_age":
-            st.info("**Analyse Stabilité Professionnelle :** Jeunes avec longue ancienneté = profils stables et valorisés. Seniors avec faible ancienneté = reconversion ou instabilité professionnelle.")
-        elif choice_key == "credit_vs_price":
-            st.info("**Analyse Financement :** Points sur la diagonale = crédit égal au prix du bien. Au-dessus = sur-financement (frais inclus), en-dessous = apport personnel important.")
-        elif choice_key == "income_vs_annuity":
-            st.info("**Analyse Capacité de Paiement :** Ratio fondamental pour évaluer l'endettement. Mensualité > 33% des revenus mensuels = sur-endettement potentiel nécessitant vigilance.")
-        elif choice_key == "age_vs_credit":
-            st.info("**Analyse Cycle de Vie :** Jeunes avec gros crédits = premiers achats (profils risqués). Seniors avec crédits élevés = potentiel patrimonial établi.")
-        elif choice_key == "income_vs_credit":
-            st.info("**Analyse Exposition/Capacité :** Ratio crédit/revenu critique pour l'acceptation. Crédits > 5x les revenus annuels = exposition élevée nécessitant conditions particulières.")
-        elif choice_key == "education_vs_credit":
-            st.info("**Analyse Socio-économique :** Niveau d'éducation généralement corrélé aux montants de crédit acceptés. Utile pour la segmentation et personnalisation des offres commerciales.")
+    # ✅ Interprétations métier (SANS la paire éducation)
+    st.markdown("#### 💡 Interprétation métier")
+    if choice_key == "employed_vs_age":
+        st.info("**Analyse Stabilité Professionnelle :** Jeunes avec longue ancienneté = profils stables et valorisés. Seniors avec faible ancienneté = reconversion ou instabilité professionnelle.")
+    elif choice_key == "credit_vs_price":
+        st.info("**Analyse Financement :** Points sur la diagonale = crédit égal au prix du bien. Au-dessus = sur-financement (frais inclus), en-dessous = apport personnel important.")
+    elif choice_key == "income_vs_annuity":
+        st.info("**Analyse Capacité de Paiement :** Ratio fondamental pour évaluer l'endettement. Mensualité > 33% des revenus mensuels = sur-endettement potentiel nécessitant vigilance.")
+    elif choice_key == "age_vs_credit":
+        st.info("**Analyse Cycle de Vie :** Jeunes avec gros crédits = premiers achats (profils risqués). Seniors avec crédits élevés = potentiel patrimonial établi.")
+    elif choice_key == "income_vs_credit":
+        st.info("**Analyse Exposition/Capacité :** Ratio crédit/revenu critique pour l'acceptation. Crédits > 5x les revenus annuels = exposition élevée nécessitant conditions particulières.")
 
 # ---------- Explications simples ----------
 if st.button("Explication des caractéristiques sélectionnées", key="exp_feat"):
