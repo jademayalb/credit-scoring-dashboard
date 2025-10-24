@@ -10,9 +10,7 @@ Cette version conserve l'ensemble des visuels de la page :
 - comparaison des risques (bar chart)
 - explications et footer
 
-Modifications demandées :
-- Ne pas afficher "(vue simplifiée)" dans le titre.
-- La bivariée reste une section parmi d'autres (elle n'occupe pas toute la page).
+Modifications :
 - Option technique supprimée : transformations gérées en backend, pas d'options visibles.
 - UI métier : l'utilisateur choisit une paire pré-définie compréhensible.
 """
@@ -420,3 +418,4 @@ st.markdown("""
     <strong>Comparaison de clients</strong> — Transformations appliquées automatiquement pour faciliter l'interprétation ; tooltips conservent les valeurs brutes.
 </div>
 """, unsafe_allow_html=True)
+
