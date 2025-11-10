@@ -11,9 +11,9 @@ from config import FEATURE_DESCRIPTIONS, COLORBLIND_FRIENDLY_PALETTE, UI_CONFIG
 
 st.set_page_config(page_title="Simulateur de scoring", page_icon="🧪", layout="wide")
 
-st.title("Simulateur de scoring — Client existant ou nouveau profil")
+st.title("Simulateur de scoring — Client existant")
 st.markdown(
-    "Choisissez un client existant ou saisissez un nouveau profil. Modifiez les valeurs des "
+    "Sélectionnez un client existant et modifiez les valeurs des "
     "caractéristiques sélectionnées, puis cliquez sur « Obtenir score rafraîchi » pour appeler "
     "l'API et afficher la probabilité et la décision. Un comparatif Avant / Après est présenté."
 )
@@ -112,23 +112,17 @@ with st.spinner("Chargement de la liste des clients..."):
     except Exception:
         available_clients = []
 
-# UI: mode and client selector
-col_mode, col_select = st.columns([2, 1])
-with col_mode:
-    mode = st.radio("Mode", options=["Client existant", "Nouveau client"], index=0,
-                    help="Choisissez 'Client existant' pour préremplir depuis un client ; sinon saisissez un nouveau profil.")
-with col_select:
-    if available_clients:
-        selected_client = st.selectbox("Choisir un client existant", options=available_clients,
-                                       format_func=lambda x: f"Client #{x}",
-                                       disabled=(mode != "Client existant"))
-    else:
-        selected_client = None
-        st.info("Liste clients indisponible.")
+# UI: client selector only
+if available_clients:
+    selected_client = st.selectbox("Choisir un client existant", options=available_clients,
+                                   format_func=lambda x: f"Client #{x}")
+else:
+    selected_client = None
+    st.info("Liste clients indisponible.")
 
 # If existing client, fetch its current prediction (before)
 original_prediction = None
-if mode == "Client existant" and selected_client is not None:
+if selected_client is not None:
     with st.spinner(f"Chargement données et score du client #{selected_client}..."):
         try:
             details = get_client_details(int(selected_client))
@@ -239,17 +233,17 @@ if compute:
     with st.spinner("Appel de l'API de scoring..."):
         try:
             # === UTILISER simulate_prediction (POST) pour la simulation ===
-            if mode == "Client existant" and selected_client is not None:
+            if selected_client is not None:
                 # simulate_prediction enverra un POST vers /predict/<client_id> puis /predict si nécessaire
                 prediction_result = simulate_prediction(client_id=int(selected_client), features=payload_features)
             else:
-                prediction_result = simulate_prediction(features=payload_features)
+                st.error("Veuillez sélectionner un client.")
 
             # normalize_response de simulate_prediction renvoie déjà la structure attendue par l'UI
             if prediction_result is None:
                 # si la simulation a renvoyé None, essayer d'appeler l'ancien get_client_prediction en dernier recours
                 try:
-                    if mode == "Client existant" and selected_client is not None:
+                    if selected_client is not None:
                         prediction_result = get_client_prediction(int(selected_client))
                     else:
                         prediction_result = None
