@@ -138,35 +138,42 @@ if mode == "Client existant" and selected_client is not None:
             st.warning("Impossible de récupérer la prédiction initiale du client (API).")
             original_prediction = None
 
-# Prepare defaults and prefill
-defaults: Dict[str, Any] = {
-    "AMT_CREDIT": 500000.0,
-    "AMT_GOODS_PRICE": 600000.0,
-    "AMT_ANNUITY": 15000.0,
-    "DAYS_BIRTH": 35.0,   # years positive for UX
-    "EXT_SOURCE_3": 0.5
-}
-prefill = {}
-if mode == "Client existant" and selected_client is not None:
+# Préremplissage depuis le client sélectionné
+values = {}
+if selected_client is not None:
     try:
         details = details or get_client_details(int(selected_client))
         feats = (details or {}).get("features", {})
+        
         for f in SIM_FEATURES:
             raw = feats.get(f, None)
             if raw is None:
+                # Valeurs de fallback si feature manquante
+                values[f] = 500000.0 if f == "AMT_CREDIT" else \
+                           600000.0 if f == "AMT_GOODS_PRICE" else \
+                           15000.0 if f == "AMT_ANNUITY" else \
+                           35.0 if f == "DAYS_BIRTH" else \
+                           0.5 if f == "EXT_SOURCE_3" else 0
                 continue
+                
             if f == "DAYS_BIRTH":
                 try:
                     val = float(raw)
-                    prefill[f] = round((-val) / 365.0, 2) if val not in (None, 365243) else defaults[f]
+                    values[f] = round((-val) / 365.0, 2) if val not in (None, 365243) else 35.0
                 except Exception:
-                    prefill[f] = defaults[f]
+                    values[f] = 35.0
             else:
-                prefill[f] = raw
+                values[f] = raw
     except Exception:
-        prefill = {}
-
-values = {f: prefill.get(f, defaults.get(f)) for f in SIM_FEATURES}
+        st.warning("Erreur lors du chargement des données client")
+        # Valeurs par défaut en cas d'erreur totale
+        values = {
+            "AMT_CREDIT": 500000.0,
+            "AMT_GOODS_PRICE": 600000.0,
+            "AMT_ANNUITY": 15000.0,
+            "DAYS_BIRTH": 35.0,
+            "EXT_SOURCE_3": 0.5
+        }
 
 # ---------- Widgets to edit features (SANS FORMULAIRE) ----------
 st.markdown("### Valeurs des caractéristiques (édition)")
@@ -192,7 +199,7 @@ for i, feat in enumerate(SIM_FEATURES):
         widgets[feat] = col.text_input(label, value=str(values.get(feat, "")),
                                        help=FEATURE_DESCRIPTIONS.get(feat, ""))
 
-# ✅ CORRECTION : Toujours utiliser les valeurs actuelles des widgets
+# Toujours utiliser les valeurs actuelles des widgets
 for f in SIM_FEATURES:
     values[f] = widgets.get(f)
 
