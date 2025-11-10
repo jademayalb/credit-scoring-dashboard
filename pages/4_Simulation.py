@@ -1,4 +1,3 @@
-# (fichier complet, identique au tien sauf la section d'appel API modifiée pour utiliser simulate_prediction)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -24,7 +23,7 @@ SIM_FEATURES = [
     "AMT_CREDIT",
     "AMT_GOODS_PRICE",
     "AMT_ANNUITY",
-    "DAYS_BIRTH",       # shown as years (positive), converted to negative days for the model
+    "DAYS_BIRTH",       
     "EXT_SOURCE_3"
 ]
 
